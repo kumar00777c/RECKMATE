@@ -2,6 +2,7 @@ const express = require("express");
 const { createClient } = require("@supabase/supabase-js");
 const { Resend } = require("resend");
 const path = require("path");
+const { MultiplayerManager } = require("./multiplayer");
 require("dotenv").config();
 
 const app = express();
@@ -1169,6 +1170,181 @@ app.post("/api/logout", async (req, res) => {
         status: "success",
         message: "Logged out successfully."
     });
+});
+
+// ============================================================
+// MULTIPLAYER CHESS (SSE + HTTP POST)
+// ============================================================
+
+const multiplayerManager = new MultiplayerManager(createSupabaseAdminClient());
+
+// Helper to authenticate user for multiplayer endpoints
+async function getAuthenticatedUser(req, res) {
+    const supabase = createSupabaseClient();
+    const accessToken = getCookie(req, "reck_access_token");
+    const refreshToken = getCookie(req, "reck_refresh_token");
+
+    if (!accessToken && !refreshToken) {
+        return null;
+    }
+
+    let userId = null;
+    if (accessToken) {
+        const { data, error } = await supabase.auth.getUser(accessToken);
+        if (!error && data?.user) {
+            userId = data.user.id;
+        }
+    }
+
+    if (!userId && refreshToken) {
+        const { data, error } = await supabase.auth.refreshSession({
+            refresh_token: refreshToken
+        });
+        if (!error && data?.session && data?.user) {
+            userId = data.user.id;
+            setCookie(res, "reck_access_token", data.session.access_token, data.session.expires_in);
+            setCookie(res, "reck_refresh_token", data.session.refresh_token, 60 * 60 * 24 * 30);
+        }
+    }
+
+    if (!userId) return null;
+
+    const { data: profile } = await supabase
+        .from("Profiles")
+        .select("id, username, full_name, rating")
+        .eq("id", userId)
+        .single();
+
+    return profile;
+}
+
+// 1. Get open games list
+app.get("/api/multiplayer/open", (req, res) => {
+    res.json({
+        status: "success",
+        games: multiplayerManager.getOpenRooms()
+    });
+});
+
+// 2. Create a multiplayer room
+app.post("/api/multiplayer/create", async (req, res) => {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) {
+        return res.status(401).json({ status: "error", message: "Not authenticated." });
+    }
+
+    const { time_control, is_private, preferred_color } = req.body;
+    const { room, color } = multiplayerManager.createRoom(user, {
+        timeControl: time_control || "10+0",
+        isPrivate: !!is_private,
+        preferredColor: preferred_color || "random"
+    });
+
+    res.json({
+        status: "success",
+        room: room.getState(),
+        assignedColor: color
+    });
+});
+
+// 3. Join an existing room by ID or 6-digit Code
+app.post("/api/multiplayer/join", async (req, res) => {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) {
+        return res.status(401).json({ status: "error", message: "Not authenticated." });
+    }
+
+    const { room_id_or_code } = req.body;
+    if (!room_id_or_code) {
+        return res.status(400).json({ status: "error", message: "Room ID or code is required." });
+    }
+
+    const result = multiplayerManager.joinRoom(user, room_id_or_code);
+    if (result.error) {
+        return res.status(400).json({ status: "error", message: result.error });
+    }
+
+    res.json({
+        status: "success",
+        room: result.room.getState(),
+        assignedColor: result.color
+    });
+});
+
+// 4. SSE Stream for Real-time Game Events
+app.get("/api/multiplayer/game/:id/stream", async (req, res) => {
+    const roomId = req.params.id;
+    const room = multiplayerManager.getRoom(roomId);
+
+    if (!room) {
+        return res.status(404).json({ status: "error", message: "Game not found." });
+    }
+
+    // Set headers for Server-Sent Events
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // Disable buffering for NGINX/Cloudflare
+    res.flushHeaders?.();
+
+    // Keep connection alive with periodic pings
+    const pingInterval = setInterval(() => {
+        try {
+            res.write(": ping\n\n");
+        } catch (e) {
+            clearInterval(pingInterval);
+        }
+    }, 15000);
+
+    req.on("close", () => {
+        clearInterval(pingInterval);
+    });
+
+    room.addClient(res);
+});
+
+// 5. Submit Move
+app.post("/api/multiplayer/game/:id/move", async (req, res) => {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) {
+        return res.status(401).json({ status: "error", message: "Not authenticated." });
+    }
+
+    const room = multiplayerManager.getRoom(req.params.id);
+    if (!room) {
+        return res.status(404).json({ status: "error", message: "Game not found." });
+    }
+
+    const { from, to, promotion } = req.body;
+    const result = room.makeMove(user.id, { from, to, promotion: promotion || "q" });
+
+    if (!result.success) {
+        return res.status(400).json({ status: "error", message: result.message });
+    }
+
+    res.json({ status: "success", move: result.move, state: result.state });
+});
+
+// 6. Game Actions (Resign, Draw offer/accept/decline)
+app.post("/api/multiplayer/game/:id/action", async (req, res) => {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) {
+        return res.status(401).json({ status: "error", message: "Not authenticated." });
+    }
+
+    const room = multiplayerManager.getRoom(req.params.id);
+    if (!room) {
+        return res.status(404).json({ status: "error", message: "Game not found." });
+    }
+
+    const { action } = req.body; // "resign", "offer_draw", "accept_draw", "decline_draw"
+    const result = room.handleAction(user.id, action);
+
+    if (!result.success) {
+        return res.status(400).json({ status: "error", message: result.message });
+    }
+
+    res.json({ status: "success" });
 });
 
 app.listen(PORT, () => {
