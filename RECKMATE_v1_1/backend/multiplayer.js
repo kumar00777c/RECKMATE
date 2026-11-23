@@ -394,8 +394,13 @@ class MultiplayerManager {
             const rw = whiteProfile.rating || 1000;
             const rb = blackProfile.rating || 1000;
 
-            // Elo formula with K-factor = 32
-            const K = 32;
+            // Elo formula with K-factor = 16
+            // Equal win: +8 / -8
+            // Upset win: ~+12 to +14 / -12 to -14
+            // Expected win: ~+4 / -4
+            // Draw between equals: 0
+            // Draw against higher: ~+4 / -4
+            const K = 16;
             const expectedW = 1 / (1 + Math.pow(10, (rb - rw) / 400));
             const expectedB = 1 / (1 + Math.pow(10, (rw - rb) / 400));
 
