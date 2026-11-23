@@ -3,9 +3,8 @@
   "version": "1.1.0",
   "description": "RECKMATE — REC Chess Arena",
   "scripts": {
-    "start": "node backend/server.js",
-    "build": "cd backend && npm install",
-    "postinstall": "cd backend && npm install"
+    "start": "node RECKMATE_v1_1/backend/server.js",
+    "build": "npm --prefix RECKMATE_v1_1/backend install"
   },
   "keywords": [
     "chess",
