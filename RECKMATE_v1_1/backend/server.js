@@ -1347,6 +1347,55 @@ app.post("/api/multiplayer/game/:id/action", async (req, res) => {
     res.json({ status: "success" });
 });
 
+// 7. Live Leaderboard Endpoint (Top rated students)
+app.get("/api/leaderboard", async (req, res) => {
+    try {
+        const supabase = createSupabaseClient();
+        const { data: players, error } = await supabase
+            .from("Profiles")
+            .select("id, username, full_name, rating, role")
+            .order("rating", { ascending: false })
+            .limit(50);
+
+        if (error) {
+            return res.status(500).json({ status: "error", message: "Failed to fetch leaderboard." });
+        }
+
+        return res.json({
+            status: "success",
+            players: players || []
+        });
+    } catch (err) {
+        return res.status(500).json({ status: "error", message: "Error loading leaderboard." });
+    }
+});
+
+// 8. Player Match History
+app.get("/api/matches", async (req, res) => {
+    try {
+        const user = await getAuthenticatedUser(req, res);
+        if (!user) {
+            return res.status(401).json({ status: "error", message: "Not authenticated." });
+        }
+
+        const supabase = createSupabaseClient();
+        const { data: games, error } = await supabase
+            .from("Games")
+            .select("*")
+            .or(`white_player_id.eq.${user.id},black_player_id.eq.${user.id}`)
+            .order("ended_at", { ascending: false })
+            .limit(20);
+
+        if (error) {
+            return res.json({ status: "success", games: [] });
+        }
+
+        return res.json({ status: "success", games: games || [] });
+    } catch (err) {
+        return res.json({ status: "success", games: [] });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`RECKMATE server running on port ${PORT}`);
 });

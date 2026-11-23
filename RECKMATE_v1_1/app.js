@@ -1,4 +1,39 @@
-const state = {
+// Web Audio API Synthesized Sound Effects (No external audio file dependencies)
+const soundFx = {
+  ctx: null,
+  init() {
+    if (!this.ctx) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) this.ctx = new AudioCtx();
+    }
+    if (this.ctx && this.ctx.state === "suspended") {
+      this.ctx.resume();
+    }
+  },
+  playTone(freq, type, duration, gainLevel = 0.15) {
+    try {
+      this.init();
+      if (!this.ctx) return;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+      gain.gain.setValueAtTime(gainLevel, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start();
+      osc.stop(this.ctx.currentTime + duration);
+    } catch (e) {}
+  },
+  move() { this.playTone(480, "sine", 0.08, 0.12); },
+  capture() { this.playTone(320, "triangle", 0.12, 0.2); },
+  check() { this.playTone(660, "sawtooth", 0.15, 0.15); },
+  gameEnd() {
+    this.playTone(520, "sine", 0.2, 0.2);
+    setTimeout(() => this.playTone(680, "sine", 0.35, 0.2), 120);
+  }
+};
   loggedIn: false,
   user: null,
   sessionChecked: false,
@@ -1010,19 +1045,101 @@ return `<section class="hero">
 }
 
 function leaderboard(){
-const rows=[
-["1","Kumar","1315","991","512","51.7%"],
-["2","Club Player A","1126","18","12","66.7%"],
-["3","Club Player B","1090","24","13","54.2%"],
-["4","Club Player C","1064","11","6","54.5%"],
-["5","Club Player D","1036","9","5","55.6%"],
-["6","Club Player E","1000","0","0","—"]
-];
-return `<div class="page-title"><div class="eyebrow">COMPETE</div><h1>Leaderboard</h1><p>Every game counts. The club's internal rating starts at 1000.</p></div>
-<div class="tabs"><button class="tab active">All time</button><button class="tab">This month</button><button class="tab">This week</button></div>
-<div class="table-wrap"><table><thead><tr><th>#</th><th>Player</th><th>Rating</th><th>Games</th><th>Wins</th><th>Win rate</th></tr></thead><tbody>
-${rows.map(r=>`<tr><td class="rank">${r[0]}</td><td><div class="player"><span class="mini-avatar">${initials(r[1])}</span><strong>${r[1]}</strong></div></td><td><strong>${r[2]}</strong></td><td>${r[3]}</td><td>${r[4]}</td><td>${r[5]}</td></tr>`).join("")}
-</tbody></table></div>`;
+  return `<div class="page-title">
+    <div class="eyebrow">COMPETE</div>
+    <h1>Leaderboard</h1>
+    <p>Live rankings from the college arena. Play online matches to climb the board.</p>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Player</th>
+          <th>Rating</th>
+          <th>Role</th>
+        </tr>
+      </thead>
+      <tbody id="leaderboardTbody">
+        <tr><td colspan="4" class="muted" style="text-align:center; padding:24px;">Loading leaderboard...</td></tr>
+      </tbody>
+    </table>
+  </div>`;
+}
+
+async function loadLeaderboardData() {
+  const tbody = document.getElementById("leaderboardTbody");
+  if (!tbody) return;
+
+  try {
+    const res = await fetch("/api/leaderboard");
+    const data = await res.json();
+    if (!res.ok || data.status !== "success" || !data.players.length) {
+      tbody.innerHTML = `<tr><td colspan="4" class="muted" style="text-align:center; padding:20px;">No players ranked yet.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = data.players.map((p, idx) => `
+      <tr>
+        <td class="rank">${idx + 1}</td>
+        <td>
+          <div class="player">
+            <span class="mini-avatar">${initials(p.full_name || p.username)}</span>
+            <strong>${p.username}</strong>
+            ${p.role === 'admin' ? '<span class="tag" style="margin-left:6px; font-size:11px; padding:2px 6px;">ADMIN</span>' : ''}
+          </div>
+        </td>
+        <td><strong style="color:var(--accent); font-size:15px;">${p.rating || 1000}</strong></td>
+        <td style="text-transform:capitalize; color:var(--muted);">${p.role}</td>
+      </tr>
+    `).join("");
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="4" class="muted" style="text-align:center; padding:20px;">Unable to load leaderboard.</td></tr>`;
+  }
+}
+
+async function loadMatchHistory() {
+  const container = document.getElementById("profileMatchHistory");
+  if (!container) return;
+
+  try {
+    const res = await fetch("/api/matches");
+    const data = await res.json();
+    if (!res.ok || data.status !== "success" || !data.games || !data.games.length) {
+      container.innerHTML = `<div class="muted">No online matches recorded yet. Play a game in the arena to see your history!</div>`;
+      return;
+    }
+
+    const currentUsername = state.user?.username;
+    container.innerHTML = `
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        ${data.games.map(g => {
+          const isWhite = g.white_username === currentUsername;
+          const won = (g.winner === 'white' && isWhite) || (g.winner === 'black' && !isWhite);
+          const draw = g.winner === 'draw';
+          const opponent = isWhite ? g.black_username : g.white_username;
+          const resultBadge = draw ? '<span class="tag" style="background:#555; color:#fff;">DRAW</span>'
+                            : won ? '<span class="tag" style="background:#2e7d32; color:#fff;">VICTORY</span>'
+                            : '<span class="tag" style="background:#c62828; color:#fff;">DEFEAT</span>';
+
+          const dateStr = g.ended_at ? new Date(g.ended_at).toLocaleDateString() : '';
+
+          return `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px; background:var(--panel2); border:1px solid var(--border); border-radius:10px;">
+              <div>
+                ${resultBadge}
+                <span style="margin-left:10px; font-weight:600;">vs ${opponent || 'Opponent'}</span>
+                <span class="muted" style="font-size:12px; margin-left:8px;">(${g.time_control || '10+0'})</span>
+              </div>
+              <div class="muted" style="font-size:13px;">${dateStr}</div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    `;
+  } catch (err) {
+    container.innerHTML = `<div class="muted">Unable to load match history.</div>`;
+  }
 }
 
 function createBoard(game, options={}){
@@ -1385,12 +1502,16 @@ function startMpEventSource(gameId) {
         state.game.load(data.state.fen);
         if (data.move) {
           state.lastMove = { from: data.move.from, to: data.move.to };
+          if (data.state.inCheck) soundFx.check();
+          else if (data.move.captured) soundFx.capture();
+          else soundFx.move();
         }
         renderPlayBoard();
         updateClocks(data.state.whiteTime, data.state.blackTime);
       } else if (data.type === "game_over") {
         state.mpRoom = data.state;
         state.game.load(data.state.fen);
+        soundFx.gameEnd();
         renderPlayBoard();
         const msg = data.winner ? `${data.winner.toUpperCase()} won by ${data.termination}!` : `Game ended in a draw!`;
         toast(msg);
@@ -1897,6 +2018,15 @@ function profile(){
         </div>
 
       </div>
+
+      <div class="card" style="margin-top: 24px; padding: 24px;">
+        <div class="eyebrow">RECENT ACTIVITY</div>
+        <h3 style="margin: 6px 0 16px;">Multiplayer Match History</h3>
+        <div id="profileMatchHistory">
+          <div class="muted">Loading match history...</div>
+        </div>
+      </div>
+
      ${editProfileModal()}
     </div>
   `;
@@ -2603,6 +2733,13 @@ if (
   state.forcePasswordChange
 ) {
   setupEditProfile(state.forcePasswordChange);
+  if (state.page === "profile") {
+    loadMatchHistory();
+  }
+}
+
+if (state.page === "leaderboard") {
+  loadLeaderboardData();
 }
 
   // --------------------------------------------------

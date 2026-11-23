@@ -347,7 +347,7 @@ class MultiplayerManager {
             if (!this.supabaseAdmin) return;
             const state = room.getState();
 
-            // Try saving game into Supabase Games table if it exists
+            // 1. Save game into Supabase Games table if it exists
             const { error } = await this.supabaseAdmin
                 .from("Games")
                 .insert({
@@ -366,8 +366,54 @@ class MultiplayerManager {
             if (error) {
                 console.warn("Games table persist notice:", error.message);
             }
+
+            // 2. Automated Elo Rating Calculation
+            if (room.white?.id && room.black?.id && room.winner) {
+                await this.updatePlayerRatings(room.white.id, room.black.id, room.winner);
+            }
         } catch (err) {
             console.error("Game persist exception:", err);
+        }
+    }
+
+    async updatePlayerRatings(whiteId, blackId, winner) {
+        try {
+            // Fetch current ratings
+            const { data: profiles, error } = await this.supabaseAdmin
+                .from("Profiles")
+                .select("id, rating")
+                .in("id", [whiteId, blackId]);
+
+            if (error || !profiles || profiles.length < 2) return;
+
+            const whiteProfile = profiles.find(p => p.id === whiteId);
+            const blackProfile = profiles.find(p => p.id === blackId);
+
+            if (!whiteProfile || !blackProfile) return;
+
+            const rw = whiteProfile.rating || 1000;
+            const rb = blackProfile.rating || 1000;
+
+            // Elo formula with K-factor = 32
+            const K = 32;
+            const expectedW = 1 / (1 + Math.pow(10, (rb - rw) / 400));
+            const expectedB = 1 / (1 + Math.pow(10, (rw - rb) / 400));
+
+            const actualW = winner === "white" ? 1 : winner === "black" ? 0 : 0.5;
+            const actualB = winner === "black" ? 1 : winner === "white" ? 0 : 0.5;
+
+            const newWhiteRating = Math.max(100, Math.round(rw + K * (actualW - expectedW)));
+            const newBlackRating = Math.max(100, Math.round(rb + K * (actualB - expectedB)));
+
+            // Update both player profiles
+            await Promise.all([
+                this.supabaseAdmin.from("Profiles").update({ rating: newWhiteRating }).eq("id", whiteId),
+                this.supabaseAdmin.from("Profiles").update({ rating: newBlackRating }).eq("id", blackId)
+            ]);
+
+            console.log(`[ELO UPDATED] White (${whiteId}): ${rw} -> ${newWhiteRating} | Black (${blackId}): ${rb} -> ${newBlackRating}`);
+        } catch (err) {
+            console.error("Error updating player ratings:", err);
         }
     }
 }
