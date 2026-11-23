@@ -1,0 +1,16 @@
+{
+  "name": "reckmate",
+  "version": "1.1.0",
+  "description": "RECKMATE — REC Chess Arena",
+  "scripts": {
+    "start": "node backend/server.js",
+    "build": "cd backend && npm install",
+    "postinstall": "cd backend && npm install"
+  },
+  "keywords": [
+    "chess",
+    "reckmate"
+  ],
+  "author": "",
+  "license": "ISC"
+}

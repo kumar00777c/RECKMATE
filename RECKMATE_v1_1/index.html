@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RECKMATE — REC Chess Arena</title>
+  <meta name="description" content="RECKMATE — the chess arena for the REC community.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#home">
+        <span class="brand-mark">♞</span>
+        <span><b>RECK</b>MATE<small>REC CHESS ARENA</small></span>
+      </a>
+      <nav class="main-nav">
+        <button data-page="home">Home</button>
+        <button data-page="play">Play</button>
+        <button data-page="puzzles">Puzzles</button>
+        <button data-page="bots">Bots</button>
+        <button data-page="leaderboard">Leaderboard</button>
+        <button data-page="club">Club</button>
+      </nav>
+      <div id="mobileMenu" class="mobile-menu">
+       <a href="#home">Home</a>
+       <a href="#play">Play</a>
+       <a href="#puzzles">Puzzles</a>
+       <a href="#bots">Bots</a>
+       <a href="#leaderboard">Leaderboard</a>
+       <a href="#club">Club</a>
+        <div class="mobile-menu-divider"></div>
+
+  <button id="mobileLogoutButton" class="mobile-logout">
+    Logout
+  </button>
+       </div>
+      
+       <div class="top-actions">
+
+  <button
+    class="icon-btn"
+    id="themeBtn"
+    title="Toggle theme"
+  >☾</button>
+
+  <button
+    class="profile-chip"
+    id="profileChip"
+  >
+    <span class="avatar" id="topAvatar">K</span>
+    <span id="topRating">1000</span>
+  </button>
+
+  <button
+    class="btn logout-btn"
+    id="logoutButton"
+  >Logout</button>
+
+  <button
+    id="menuToggle"
+    class="menu-toggle"
+    aria-label="Open menu"
+  >☰</button>
+
+</div>
+
+    </header>
+
+    <main id="app"></main>
+   
+    <footer class="footer">
+      <div><strong>RECKMATE</strong> · Play. Compete. Improve.</div>
+      <div>REC Chess Community · V1.1 prototype</div>
+    </footer>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
