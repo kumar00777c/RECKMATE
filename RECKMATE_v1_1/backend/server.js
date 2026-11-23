@@ -889,11 +889,14 @@ app.post("/api/forgot-password", async (req, res) => {
         const internalEmail =
             `${profile.registration_no.toLowerCase()}@accounts.reckmate.local`;
 
-        // Determine redirect URL dynamically for development or production
+        // Determine the public URL of the application
         const baseUrl =
             process.env.APP_URL ||
-            req.get("origin") ||
-            `${req.protocol}://${req.get("host")}`;
+            (req.get("origin") && !req.get("origin").includes("localhost") ? req.get("origin") : null) ||
+            (req.headers["x-forwarded-host"]
+                ? `${req.headers["x-forwarded-proto"] || "https"}://${req.headers["x-forwarded-host"]}`
+                : null) ||
+            "https://reckmate.onrender.com";
 
         // Generate the secure Supabase recovery link.
         const {
@@ -907,7 +910,7 @@ app.post("/api/forgot-password", async (req, res) => {
             }
         });
 
-        if (linkError || !linkData?.properties?.action_link) {
+        if (linkError || !linkData?.properties) {
 
             console.error(
                 "Recovery link generation failed:",
@@ -921,8 +924,10 @@ app.post("/api/forgot-password", async (req, res) => {
             });
         }
 
-        const recoveryLink =
-            linkData.properties.action_link;
+        // Send the student directly to the website reset page with the secure token,
+        // so they never get bounced back to localhost or fail Supabase redirect whitelist
+        const recoveryToken = linkData.properties.hashed_token || linkData.properties.email_otp;
+        const recoveryLink = `${baseUrl}/#reset-password?token=${recoveryToken}&type=recovery`;
 
         // Send the recovery link to the student's
         // registered recovery email.
@@ -1347,17 +1352,48 @@ app.post("/api/multiplayer/game/:id/action", async (req, res) => {
     res.json({ status: "success" });
 });
 
-// 7. Live Leaderboard Endpoint (Top rated students)
+// 7. Matchmaking: Find or Create Queue Match
+app.post("/api/multiplayer/matchmake", async (req, res) => {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) {
+        return res.status(401).json({ status: "error", message: "Not authenticated." });
+    }
+
+    const { time_control } = req.body;
+    const { room, color, matched } = multiplayerManager.findOrCreateMatch(user, time_control || "10+0");
+
+    res.json({
+        status: "success",
+        room: room.getState(),
+        assignedColor: color,
+        matched: matched
+    });
+});
+
+// 8. Cancel Matchmaking Queue
+app.post("/api/multiplayer/cancel-queue", async (req, res) => {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) {
+        return res.status(401).json({ status: "error", message: "Not authenticated." });
+    }
+
+    const { room_id } = req.body;
+    const cancelled = multiplayerManager.cancelMatchmaking(user, room_id);
+    res.json({ status: "success", cancelled });
+});
+
+// 9. Live Leaderboard Endpoint (Top rated students from database)
 app.get("/api/leaderboard", async (req, res) => {
     try {
-        const supabase = createSupabaseClient();
+        const supabase = createSupabaseAdminClient();
         const { data: players, error } = await supabase
             .from("Profiles")
             .select("id, username, full_name, rating, role")
             .order("rating", { ascending: false })
-            .limit(50);
+            .limit(100);
 
         if (error) {
+            console.error("Leaderboard fetch error:", error);
             return res.status(500).json({ status: "error", message: "Failed to fetch leaderboard." });
         }
 

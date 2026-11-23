@@ -303,6 +303,58 @@ class MultiplayerManager {
         return { room, color };
     }
 
+    findOrCreateMatch(user, timeControl = "10+0") {
+        // 1. Look for an existing open room waiting for an opponent with the same time control
+        for (const room of this.rooms.values()) {
+            if (
+                room.status === "waiting" &&
+                !room.isPrivate &&
+                room.timeControl === timeControl &&
+                (!room.white || room.white.id !== user.id) &&
+                (!room.black || room.black.id !== user.id)
+            ) {
+                // Match found! Join this room
+                const color = room.addPlayer(user);
+                return { room, color, matched: true };
+            }
+        }
+
+        // 2. Check if this user is already waiting in a queue room for this time control
+        for (const room of this.rooms.values()) {
+            if (
+                room.status === "waiting" &&
+                !room.isPrivate &&
+                room.timeControl === timeControl &&
+                ((room.white && room.white.id === user.id) || (room.black && room.black.id === user.id))
+            ) {
+                const color = room.white && room.white.id === user.id ? "white" : "black";
+                return { room, color, matched: false };
+            }
+        }
+
+        // 3. Create a new room in the queue
+        const { room, color } = this.createRoom(user, {
+            timeControl,
+            isPrivate: false,
+            preferredColor: "random"
+        });
+
+        return { room, color, matched: false };
+    }
+
+    cancelMatchmaking(user, roomId) {
+        const room = this.rooms.get(roomId);
+        if (room && room.status === "waiting") {
+            if ((room.white && room.white.id === user.id) || (room.black && room.black.id === user.id)) {
+                room.status = "cancelled";
+                this.rooms.delete(roomId);
+                this.roomsByCode.delete(room.code);
+                return true;
+            }
+        }
+        return false;
+    }
+
     joinRoom(user, roomIdOrCode) {
         let id = roomIdOrCode;
         if (this.roomsByCode.has(roomIdOrCode.toUpperCase())) {

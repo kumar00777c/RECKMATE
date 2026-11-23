@@ -544,7 +544,133 @@ tr:last-child td{border-bottom:0}
    MULTIPLAYER & MOBILE RESPONSIVENESS POLISH
    ========================================================= */
 
+/* Matchmaking Screen & Pulsing Radar Animation */
+.matchmaking-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 55vh;
+}
+
+.matchmaking-card {
+  max-width: 440px;
+  width: 100%;
+  padding: 44px 32px;
+  text-align: center;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
+}
+
+.matchmaking-radar {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.radar-piece {
+  font-size: 46px;
+  z-index: 2;
+  color: var(--accent);
+  filter: drop-shadow(0 0 12px rgba(212, 175, 55, 0.4));
+  animation: radar-float 2.5s infinite ease-in-out;
+}
+
+@keyframes radar-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+.radar-pulse {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  animation: radar-wave 2s infinite ease-out;
+  opacity: 0.8;
+}
+
+.radar-pulse.pulse-delay {
+  animation-delay: 1s;
+}
+
+@keyframes radar-wave {
+  0% { transform: scale(0.6); opacity: 0.9; }
+  100% { transform: scale(1.9); opacity: 0; }
+}
+
+/* Time Presets Grid & Cards */
+.play-hub-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.25fr) minmax(300px, 1fr);
+  gap: 24px;
+}
+
+.time-presets-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.time-preset-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 18px 12px;
+  background: var(--panel2);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: var(--text);
+}
+
+.time-preset-btn:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+
+.time-preset-btn.active {
+  border-color: var(--accent);
+  background: rgba(212, 175, 55, 0.14);
+}
+
+.time-preset-btn .time-val {
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.time-preset-btn.active .time-val {
+  color: var(--accent);
+}
+
+.time-preset-btn .time-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 3px;
+  text-transform: capitalize;
+}
+
 @media (max-width: 768px) {
+  .play-hub-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .time-presets-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .matchmaking-card {
+    padding: 30px 20px;
+  }
+
   .mp-lobby {
     grid-template-columns: 1fr !important;
   }

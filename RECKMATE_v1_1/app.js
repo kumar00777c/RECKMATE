@@ -34,6 +34,8 @@ const soundFx = {
     setTimeout(() => this.playTone(680, "sine", 0.35, 0.2), 120);
   }
 };
+
+const state = {
   loggedIn: false,
   user: null,
   sessionChecked: false,
@@ -51,8 +53,12 @@ const soundFx = {
   lastMove: null,
   gameEnded: false,
   orientation: "w",
-  // Multiplayer state
+  // Multiplayer & Matchmaking state
   playMode: "multiplayer", // "multiplayer" or "local"
+  selectedTimeControl: "10+0",
+  isMatchmaking: false,
+  matchmakingElapsed: 0,
+  matchmakingTimer: null,
   mpRoom: null,
   mpColor: null,
   mpEventSource: null,
@@ -1190,25 +1196,225 @@ function createBoard(game, options={}){
   return board;
 }
 
-function play(){
+function play() {
+  if (state.playMode === "local") {
+    return localPlayView();
+  }
+
+  // 1. In Matchmaking Queue -> Show Loading Screen
+  if (state.isMatchmaking) {
+    return matchmakingQueueView();
+  }
+
+  // 2. In Active / Completed Multiplayer Match -> Show Live Match View
+  if (state.mpRoom) {
+    return liveMultiplayerView();
+  }
+
+  // 3. Default -> Arena Matchmaking & Time Control Hub
+  return arenaHubView();
+}
+
+function matchmakingQueueView() {
+  const timeLabels = {
+    "10+0": "10 min · Rapid",
+    "5+3": "5+3 · Blitz",
+    "3+2": "3+2 · Blitz",
+    "15+10": "15+10 · Classical"
+  };
+  const label = timeLabels[state.selectedTimeControl] || state.selectedTimeControl;
+
   return `
     <div class="page-title">
-      <div class="eyebrow">CHESS ARENA</div>
+      <div class="eyebrow">ARENA MATCHMAKING</div>
+      <h1>Searching for an Opponent</h1>
+      <p>Pairing you with another player from the college chess arena.</p>
+    </div>
+
+    <div class="matchmaking-container">
+      <div class="card matchmaking-card">
+        <div class="matchmaking-radar">
+          <div class="radar-pulse"></div>
+          <div class="radar-pulse pulse-delay"></div>
+          <span class="radar-piece">♞</span>
+        </div>
+
+        <h2 style="margin: 18px 0 6px;">Looking for Match...</h2>
+        <div class="tag" style="background:var(--panel2); padding: 6px 14px; border-radius: 20px; font-weight: 600; font-size: 13px; display:inline-block; border:1px solid var(--border);">
+          ⏱️ ${label}
+        </div>
+
+        <div class="matchmaking-elapsed" style="margin-top: 20px;">
+          <span class="muted" style="font-size: 13px;">Time in queue:</span>
+          <b id="queueTime" style="font-size: 28px; font-family: monospace; color: var(--accent); display: block; margin-top: 4px;">${formatClock(state.matchmakingElapsed)}</b>
+        </div>
+
+        <button class="btn" id="btnCancelQueue" style="margin-top: 24px; padding: 10px 24px; border-radius: 8px;">
+          ✕ Cancel Matchmaking
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function arenaHubView() {
+  const tc = state.selectedTimeControl || "10+0";
+
+  return `
+    <div class="page-title">
+      <div class="eyebrow">ONLINE CHESS ARENA</div>
       <h1>Play Chess</h1>
-      <p>Challenge other college students in real-time or practice on the local board.</p>
+      <p>Select your time control, click Play, and get paired instantly with a college opponent.</p>
     </div>
 
-    <div class="play-mode-switch" style="display:flex; gap:10px; margin-bottom: 24px;">
-      <button class="btn ${state.playMode==='multiplayer'?'primary':''}" id="btnModeMultiplayer">⚔️ Online Multiplayer</button>
-      <button class="btn ${state.playMode==='local'?'primary':''}" id="btnModeLocal">♟️ Local Practice</button>
-    </div>
+    <div class="play-hub-grid">
+      <!-- Quick Play Matchmaking Card -->
+      <div class="card" style="padding: 28px;">
+        <div class="eyebrow">INSTANT MATCH</div>
+        <h2 style="margin: 6px 0 16px;">Quick Play</h2>
 
-    ${state.playMode === "multiplayer" ? multiplayerView() : localPlayView()}
+        <label style="display:block; margin-bottom: 10px; font-weight: 600; font-size: 14px;">Select Time Control</label>
+        <div class="time-presets-grid">
+          <button type="button" class="time-preset-btn ${tc==='10+0'?'active':''}" data-time="10+0">
+            <span class="time-val">10 min</span>
+            <span class="time-sub">Rapid</span>
+          </button>
+          <button type="button" class="time-preset-btn ${tc==='5+3'?'active':''}" data-time="5+3">
+            <span class="time-val">5+3</span>
+            <span class="time-sub">Blitz</span>
+          </button>
+          <button type="button" class="time-preset-btn ${tc==='3+2'?'active':''}" data-time="3+2">
+            <span class="time-val">3+2</span>
+            <span class="time-sub">Blitz</span>
+          </button>
+          <button type="button" class="time-preset-btn ${tc==='15+10'?'active':''}" data-time="15+10">
+            <span class="time-val">15+10</span>
+            <span class="time-sub">Classical</span>
+          </button>
+        </div>
+
+        <button class="btn primary full-width" id="btnFindMatch" style="margin-top: 24px; padding: 14px; font-size: 16px; font-weight: 700; letter-spacing: 0.5px;">
+          ⚔️ Play Online (Find Match)
+        </button>
+      </div>
+
+      <!-- Play a Friend / Private Room Card -->
+      <div class="card" style="padding: 28px;">
+        <div class="eyebrow">CHALLENGE A FRIEND</div>
+        <h2 style="margin: 6px 0 16px;">Custom / Private Game</h2>
+        <p class="muted" style="margin-bottom: 16px;">Create a direct room code for a friend, or enter someone's 6-letter invite code.</p>
+
+        <button class="btn full-width" id="btnCreatePrivateRoom" style="padding: 12px; margin-bottom: 16px;">
+          🔑 Create Private Invite Code
+        </button>
+
+        <label style="display:block; margin-bottom: 6px; font-weight: 600; font-size: 14px;">Join with Code</label>
+        <div style="display:flex; gap: 8px;">
+          <input type="text" id="mpRoomCodeInput" placeholder="Enter 6-letter code" style="flex:1; padding: 10px 14px; text-transform: uppercase; font-family: monospace; font-size: 15px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel2); color: var(--text);">
+          <button class="btn primary" id="btnJoinGameCode" style="padding: 10px 18px;">Join</button>
+        </div>
+
+        <hr style="border: 0; border-top: 1px solid var(--border); margin: 24px 0 16px;">
+
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span class="muted" style="font-size: 13px;">Looking for solo practice?</span>
+          <button class="btn" id="btnSwitchToLocal" style="padding: 6px 12px; font-size: 13px;">♟️ Local Board</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function liveMultiplayerView() {
+  const room = state.mpRoom;
+  const isWhite = state.mpColor === "white";
+  const whiteName = room.white ? room.white.username : "Waiting for player...";
+  const blackName = room.black ? room.black.username : "Waiting for player...";
+  const isCompleted = room.status === "completed";
+
+  return `
+    <div class="play-layout">
+      <div class="board-shell">
+        <div id="boardMount"></div>
+        <div id="boardStatus" class="board-status">
+          ${room.status === 'waiting'
+            ? `Waiting for opponent to join. Share room code: <b style="color:var(--accent); font-size:18px; letter-spacing:1px;">${room.code}</b>`
+            : isCompleted
+            ? `Game Over: ${room.winner ? room.winner.toUpperCase() + ' won by ' + room.termination : 'Draw'}`
+            : 'Match in progress.'}
+        </div>
+        <div class="actions">
+          <button class="btn" id="flip">Flip Board</button>
+          ${isCompleted
+            ? `<button class="btn primary" id="btnPlayAgain">⚔️ New Game / Play Again</button>`
+            : `<button class="btn" id="btnLeaveGame">Leave Match</button>`
+          }
+        </div>
+      </div>
+
+      <div class="chess-side">
+        <div class="card" style="margin-bottom: 14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div><span class="muted">Room Code:</span> <b style="color:var(--accent); font-family:monospace;">${room.code}</b></div>
+            <span class="tag" style="background:var(--panel2); padding:4px 8px; border-radius:6px; font-size:12px;">${room.timeControl}</span>
+          </div>
+        </div>
+
+        <div class="clock">
+          <div style="${room.turn==='b' && room.status==='active' ? 'border:1px solid var(--accent);' : ''}">
+            <span class="muted">⚫ ${blackName}</span>
+            <b id="blackClock">${formatClock(room.blackTime)}</b>
+          </div>
+          <div style="${room.turn==='w' && room.status==='active' ? 'border:1px solid var(--accent);' : ''}">
+            <span class="muted">⚪ ${whiteName}</span>
+            <b id="whiteClock">${formatClock(room.whiteTime)}</b>
+          </div>
+        </div>
+
+        <div class="card">
+          <span class="turn-badge" id="turnBadge">${room.status === 'waiting' ? 'Waiting for opponent' : isCompleted ? 'Game Over' : (room.turn === 'w' ? 'White to move' : 'Black to move')}</span>
+          <div style="margin: 12px 0 6px; font-size: 14px;">
+            You are playing as: <b style="color:var(--accent); text-transform:capitalize;">${state.mpColor || 'Spectator'}</b>
+          </div>
+
+          ${room.drawOfferedBy && room.drawOfferedBy !== state.mpColor && !isCompleted ? `
+            <div style="background:rgba(212,175,55,0.15); border:1px solid var(--accent); padding:10px; border-radius:8px; margin: 10px 0;">
+              <div>Opponent offered a draw.</div>
+              <div style="display:flex; gap:8px; margin-top:8px;">
+                <button class="btn primary" id="btnAcceptDraw" style="padding:4px 10px; font-size:12px;">Accept</button>
+                <button class="btn" id="btnDeclineDraw" style="padding:4px 10px; font-size:12px;">Decline</button>
+              </div>
+            </div>
+          ` : ''}
+
+          <!-- ABSOLUTELY NO UNDO BUTTON IN MULTIPLAYER MATCH -->
+          <div class="actions" style="margin-top: 14px;">
+            <button class="btn" id="btnMpResign" ${room.status!=='active'?'disabled':''}>Resign</button>
+            <button class="btn" id="btnMpDraw" ${room.status!=='active' || room.drawOfferedBy?'disabled':''}>Offer Draw</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Moves</h3>
+          <div class="moves" id="moves"></div>
+        </div>
+      </div>
+    </div>
   `;
 }
 
 function localPlayView() {
   return `
+    <div class="page-title">
+      <div class="eyebrow">OFFLINE PRACTICE</div>
+      <h1>Local Chess Board</h1>
+      <p>Analyze positions, test moves, or pass & play locally.</p>
+    </div>
+
+    <div style="margin-bottom: 20px;">
+      <button class="btn primary" id="btnReturnToOnline">⚔️ Return to Online Arena</button>
+    </div>
+
     <div class="play-layout">
       <div class="board-shell">
         <div id="boardMount"></div>
@@ -1233,135 +1439,6 @@ function localPlayView() {
           </div>
         </div>
         <div class="card"><h3>Moves</h3><div class="moves" id="moves"></div></div>
-      </div>
-    </div>
-  `;
-}
-
-function multiplayerView() {
-  if (!state.mpRoom) {
-    return `
-      <div class="mp-lobby" style="display:grid; grid-template-columns: minmax(300px, 1fr) minmax(300px, 1.2fr); gap: 24px;">
-        <div class="card" style="padding: 24px;">
-          <div class="eyebrow">CREATE A MATCH</div>
-          <h2 style="margin: 8px 0 16px;">Create Game</h2>
-          
-          <label style="display:block; margin: 12px 0 6px; font-weight:600; font-size:14px;">Time Control</label>
-          <select id="mpTimeControl" style="width:100%; padding:10px 12px; background:var(--panel2); color:var(--text); border:1px solid var(--border); border-radius:8px;">
-            <option value="10+0">10 min · Rapid</option>
-            <option value="5+3">5+3 · Blitz</option>
-            <option value="3+2">3+2 · Blitz</option>
-            <option value="15+10">15+10 · Classical</option>
-          </select>
-
-          <label style="display:block; margin: 14px 0 6px; font-weight:600; font-size:14px;">Play As</label>
-          <select id="mpPreferredColor" style="width:100%; padding:10px 12px; background:var(--panel2); color:var(--text); border:1px solid var(--border); border-radius:8px;">
-            <option value="random">🎲 Random Color</option>
-            <option value="white">⚪ White</option>
-            <option value="black">⚫ Black</option>
-          </select>
-
-          <div style="margin: 18px 0;">
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="mpIsPrivate">
-              <span>Private Match (Invite with Code)</span>
-            </label>
-          </div>
-
-          <button class="btn primary full-width" id="btnCreateGame" style="margin-top:10px;">Create Game</button>
-
-          <hr style="border:0; border-top:1px solid var(--border); margin: 24px 0;">
-
-          <div class="eyebrow">DIRECT INVITE</div>
-          <h3 style="margin: 6px 0 12px;">Join with Code</h3>
-          <div style="display:flex; gap:8px;">
-            <input type="text" id="mpRoomCodeInput" placeholder="Enter 6-letter code" style="flex:1; padding:10px 12px; text-transform:uppercase; background:var(--panel2); color:var(--text); border:1px solid var(--border); border-radius:8px;">
-            <button class="btn" id="btnJoinGameCode">Join</button>
-          </div>
-        </div>
-
-        <div class="card" style="padding: 24px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-            <div>
-              <div class="eyebrow">ARENA LOBBY</div>
-              <h2 style="margin: 4px 0 0;">Open Challenges</h2>
-            </div>
-            <button class="btn" id="btnRefreshLobby" style="padding: 6px 12px; font-size:13px;">🔄 Refresh</button>
-          </div>
-
-          <div id="mpOpenChallenges" style="display:flex; flex-direction:column; gap:10px;">
-            <div class="muted" style="padding:16px; text-align:center;">Loading open challenges...</div>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  // Active or waiting multiplayer match view
-  const room = state.mpRoom;
-  const isWhite = state.mpColor === "white";
-  const isBlack = state.mpColor === "black";
-  const whiteName = room.white ? room.white.username : "Waiting for player...";
-  const blackName = room.black ? room.black.username : "Waiting for player...";
-
-  return `
-    <div class="play-layout">
-      <div class="board-shell">
-        <div id="boardMount"></div>
-        <div id="boardStatus" class="board-status">
-          ${room.status === 'waiting' ? `Waiting for an opponent to join. Share room code: <b style="color:var(--accent); font-size:17px; letter-spacing:1px;">${room.code}</b>` : 'Game in progress.'}
-        </div>
-        <div class="actions">
-          <button class="btn" id="btnLeaveGame">Leave Match</button>
-          <button class="btn" id="flip">Flip Board</button>
-        </div>
-      </div>
-
-      <div class="chess-side">
-        <div class="card" style="margin-bottom:14px;">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <div><span class="muted">Room Code:</span> <b style="color:var(--accent);">${room.code}</b></div>
-            <span class="tag" style="background:var(--panel2); padding:4px 8px; border-radius:6px; font-size:12px;">${room.timeControl}</span>
-          </div>
-        </div>
-
-        <div class="clock">
-          <div style="${room.turn==='b' && room.status==='active' ? 'border:1px solid var(--accent);' : ''}">
-            <span class="muted">⚫ ${blackName}</span>
-            <b id="blackClock">${formatClock(room.blackTime)}</b>
-          </div>
-          <div style="${room.turn==='w' && room.status==='active' ? 'border:1px solid var(--accent);' : ''}">
-            <span class="muted">⚪ ${whiteName}</span>
-            <b id="whiteClock">${formatClock(room.whiteTime)}</b>
-          </div>
-        </div>
-
-        <div class="card">
-          <span class="turn-badge" id="turnBadge">${room.status === 'waiting' ? 'Waiting for opponent' : (room.turn === 'w' ? 'White to move' : 'Black to move')}</span>
-          <div style="margin: 12px 0 6px; font-size:14px;">
-            You are playing as: <b style="color:var(--accent); text-transform:capitalize;">${state.mpColor || 'Spectator'}</b>
-          </div>
-
-          ${room.drawOfferedBy && room.drawOfferedBy !== state.mpColor ? `
-            <div style="background:rgba(212,175,55,0.15); border:1px solid var(--accent); padding:10px; border-radius:8px; margin: 10px 0;">
-              <div>Opponent offered a draw.</div>
-              <div style="display:flex; gap:8px; margin-top:8px;">
-                <button class="btn primary" id="btnAcceptDraw" style="padding:4px 10px; font-size:12px;">Accept</button>
-                <button class="btn" id="btnDeclineDraw" style="padding:4px 10px; font-size:12px;">Decline</button>
-              </div>
-            </div>
-          ` : ''}
-
-          <div class="actions" style="margin-top:14px;">
-            <button class="btn" id="btnMpResign" ${room.status!=='active'?'disabled':''}>Resign</button>
-            <button class="btn" id="btnMpDraw" ${room.status!=='active' || room.drawOfferedBy?'disabled':''}>Offer Draw</button>
-          </div>
-        </div>
-
-        <div class="card">
-          <h3>Moves</h3>
-          <div class="moves" id="moves"></div>
-        </div>
       </div>
     </div>
   `;
@@ -1497,7 +1574,7 @@ function startMpEventSource(gameId) {
   es.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
-      if (data.type === "sync" || data.type === "game_started" || data.type === "move_made") {
+      if (data.type === "sync" || data.type === "move_made") {
         state.mpRoom = data.state;
         state.game.load(data.state.fen);
         if (data.move) {
@@ -1508,11 +1585,28 @@ function startMpEventSource(gameId) {
         }
         renderPlayBoard();
         updateClocks(data.state.whiteTime, data.state.blackTime);
+      } else if (data.type === "game_started") {
+        // Match found and started!
+        if (state.isMatchmaking) {
+          state.isMatchmaking = false;
+          if (state.matchmakingTimer) {
+            clearInterval(state.matchmakingTimer);
+            state.matchmakingTimer = null;
+          }
+        }
+        state.mpRoom = data.state;
+        state.game.load(data.state.fen);
+        soundFx.gameEnd();
+        toast("Opponent joined! Match started!");
+        render();
       } else if (data.type === "game_over") {
         state.mpRoom = data.state;
         state.game.load(data.state.fen);
         soundFx.gameEnd();
-        renderPlayBoard();
+        render();
+        const msg = data.winner ? `${data.winner.toUpperCase()} won by ${data.termination}!` : `Game ended in a draw!`;
+        toast(msg);
+      } else if (data.type === "draw_offered") {
         const msg = data.winner ? `${data.winner.toUpperCase()} won by ${data.termination}!` : `Game ended in a draw!`;
         toast(msg);
       } else if (data.type === "draw_offered") {
@@ -1544,193 +1638,315 @@ function updateClocks(wTime, bTime) {
 }
 
 function initMultiplayerControls() {
-  if (!state.mpRoom) {
-    // Lobby event listeners
-    const btnCreate = document.getElementById("btnCreateGame");
-    if (btnCreate) {
-      btnCreate.onclick = async () => {
-        const timeControl = document.getElementById("mpTimeControl")?.value || "10+0";
-        const preferredColor = document.getElementById("mpPreferredColor")?.value || "random";
-        const isPrivate = document.getElementById("mpIsPrivate")?.checked || false;
-
-        btnCreate.disabled = true;
-        btnCreate.textContent = "Creating...";
-
-        try {
-          const res = await fetch("/api/multiplayer/create", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              time_control: timeControl,
-              preferred_color: preferredColor,
-              is_private: isPrivate
-            })
-          });
-
-          const data = await res.json();
-          if (!res.ok || data.status !== "success") {
-            toast(data.message || "Failed to create game.");
-            btnCreate.disabled = false;
-            btnCreate.textContent = "Create Game";
-            return;
-          }
-
-          state.mpRoom = data.room;
-          state.mpColor = data.assignedColor;
-          state.orientation = data.assignedColor === "black" ? "b" : "w";
-          state.game = new Chess();
-          startMpEventSource(data.room.id);
-          render();
-        } catch (err) {
-          console.error("Create game error:", err);
-          toast("Server error creating match.");
-          btnCreate.disabled = false;
-          btnCreate.textContent = "Create Game";
-        }
-      };
+  // 1. In Matchmaking Queue
+  if (state.isMatchmaking) {
+    const btnCancel = document.getElementById("btnCancelQueue");
+    if (btnCancel) {
+      btnCancel.onclick = cancelMatchmakingUI;
     }
-
-    const btnJoinCode = document.getElementById("btnJoinGameCode");
-    const codeInput = document.getElementById("mpRoomCodeInput");
-    if (btnJoinCode && codeInput) {
-      btnJoinCode.onclick = async () => {
-        const code = codeInput.value.trim().toUpperCase();
-        if (!code) {
-          toast("Please enter a room code.");
-          return;
-        }
-
-        btnJoinCode.disabled = true;
-        btnJoinCode.textContent = "Joining...";
-
-        try {
-          const res = await fetch("/api/multiplayer/join", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ room_id_or_code: code })
-          });
-
-          const data = await res.json();
-          if (!res.ok || data.status !== "success") {
-            toast(data.message || "Could not join game.");
-            btnJoinCode.disabled = false;
-            btnJoinCode.textContent = "Join";
-            return;
-          }
-
-          state.mpRoom = data.room;
-          state.mpColor = data.assignedColor;
-          state.orientation = data.assignedColor === "black" ? "b" : "w";
-          state.game = new Chess(data.room.fen);
-          startMpEventSource(data.room.id);
-          render();
-        } catch (err) {
-          console.error("Join game error:", err);
-          toast("Server error joining match.");
-          btnJoinCode.disabled = false;
-          btnJoinCode.textContent = "Join";
-        }
-      };
-    }
-
-    const btnRefresh = document.getElementById("btnRefreshLobby");
-    if (btnRefresh) {
-      btnRefresh.onclick = loadOpenChallenges;
-    }
-
-    loadOpenChallenges();
     return;
   }
 
-  // Active match event listeners
-  renderPlayBoard();
+  // 2. In Active / Completed Match View
+  if (state.mpRoom) {
+    renderPlayBoard();
 
-  const flipBtn = document.getElementById("flip");
-  if (flipBtn) {
-    flipBtn.onclick = () => {
-      state.orientation = state.orientation === "w" ? "b" : "w";
-      renderPlayBoard();
+    const flipBtn = document.getElementById("flip");
+    if (flipBtn) {
+      flipBtn.onclick = () => {
+        state.orientation = state.orientation === "w" ? "b" : "w";
+        renderPlayBoard();
+      };
+    }
+
+    const btnPlayAgain = document.getElementById("btnPlayAgain");
+    if (btnPlayAgain) {
+      btnPlayAgain.onclick = () => {
+        if (state.mpEventSource) {
+          state.mpEventSource.close();
+          state.mpEventSource = null;
+        }
+        state.mpRoom = null;
+        state.mpColor = null;
+        state.isMatchmaking = false;
+        render();
+      };
+    }
+
+    const btnLeave = document.getElementById("btnLeaveGame");
+    if (btnLeave) {
+      btnLeave.onclick = () => {
+        if (state.mpRoom.status === "active" && !confirm("Leave active match? You can re-enter with the room code if it is still ongoing.")) {
+          return;
+        }
+        if (state.mpEventSource) {
+          state.mpEventSource.close();
+          state.mpEventSource = null;
+        }
+        state.mpRoom = null;
+        state.mpColor = null;
+        state.isMatchmaking = false;
+        render();
+      };
+    }
+
+    const btnResign = document.getElementById("btnMpResign");
+    if (btnResign) {
+      btnResign.onclick = async () => {
+        if (!confirm("Are you sure you want to resign this match?")) return;
+        try {
+          await fetch(`/api/multiplayer/game/${state.mpRoom.id}/action`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "resign" })
+          });
+        } catch (e) {
+          toast("Failed to transmit resignation.");
+        }
+      };
+    }
+
+    const btnDraw = document.getElementById("btnMpDraw");
+    if (btnDraw) {
+      btnDraw.onclick = async () => {
+        try {
+          const res = await fetch(`/api/multiplayer/game/${state.mpRoom.id}/action`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "offer_draw" })
+          });
+          if (res.ok) toast("Draw offer transmitted to opponent.");
+        } catch (e) {
+          toast("Failed to transmit draw offer.");
+        }
+      };
+    }
+
+    const btnAcceptDraw = document.getElementById("btnAcceptDraw");
+    if (btnAcceptDraw) {
+      btnAcceptDraw.onclick = async () => {
+        try {
+          await fetch(`/api/multiplayer/game/${state.mpRoom.id}/action`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "accept_draw" })
+          });
+        } catch (e) {
+          toast("Failed to accept draw.");
+        }
+      };
+    }
+
+    const btnDeclineDraw = document.getElementById("btnDeclineDraw");
+    if (btnDeclineDraw) {
+      btnDeclineDraw.onclick = async () => {
+        try {
+          await fetch(`/api/multiplayer/game/${state.mpRoom.id}/action`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "decline_draw" })
+          });
+          render();
+        } catch (e) {
+          toast("Failed to decline draw.");
+        }
+      };
+    }
+
+    return;
+  }
+
+  // 3. Play Arena Hub Controls
+  // Time preset buttons
+  document.querySelectorAll(".time-preset-btn").forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll(".time-preset-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      state.selectedTimeControl = btn.dataset.time;
+    };
+  });
+
+  // Find Match (Matchmaking Queue)
+  const btnFindMatch = document.getElementById("btnFindMatch");
+  if (btnFindMatch) {
+    btnFindMatch.onclick = () => {
+      startMatchmaking(state.selectedTimeControl || "10+0");
     };
   }
 
-  const btnLeave = document.getElementById("btnLeaveGame");
-  if (btnLeave) {
-    btnLeave.onclick = () => {
-      if (state.mpRoom.status === "active" && !confirm("Leave active game? You can return if the game is still active.")) {
+  // Create Private Room
+  const btnCreatePrivate = document.getElementById("btnCreatePrivateRoom");
+  if (btnCreatePrivate) {
+    btnCreatePrivate.onclick = async () => {
+      btnCreatePrivate.disabled = true;
+      btnCreatePrivate.textContent = "Creating Private Room...";
+
+      try {
+        const res = await fetch("/api/multiplayer/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            time_control: state.selectedTimeControl || "10+0",
+            preferred_color: "random",
+            is_private: true
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok || data.status !== "success") {
+          toast(data.message || "Failed to create room.");
+          btnCreatePrivate.disabled = false;
+          btnCreatePrivate.textContent = "🔑 Create Private Invite Code";
+          return;
+        }
+
+        state.mpRoom = data.room;
+        state.mpColor = data.assignedColor;
+        state.orientation = data.assignedColor === "black" ? "b" : "w";
+        state.game = new Chess();
+        startMpEventSource(data.room.id);
+        render();
+      } catch (err) {
+        console.error("Create private room error:", err);
+        toast("Server error creating private room.");
+        btnCreatePrivate.disabled = false;
+        btnCreatePrivate.textContent = "🔑 Create Private Invite Code";
+      }
+    };
+  }
+
+  // Join by Room Code
+  const btnJoinCode = document.getElementById("btnJoinGameCode");
+  const codeInput = document.getElementById("mpRoomCodeInput");
+  if (btnJoinCode && codeInput) {
+    btnJoinCode.onclick = async () => {
+      const code = codeInput.value.trim().toUpperCase();
+      if (!code) {
+        toast("Please enter a room code.");
         return;
       }
-      if (state.mpEventSource) {
-        state.mpEventSource.close();
-        state.mpEventSource = null;
+
+      btnJoinCode.disabled = true;
+      btnJoinCode.textContent = "Joining...";
+
+      try {
+        const res = await fetch("/api/multiplayer/join", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ room_id_or_code: code })
+        });
+
+        const data = await res.json();
+        if (!res.ok || data.status !== "success") {
+          toast(data.message || "Could not join game.");
+          btnJoinCode.disabled = false;
+          btnJoinCode.textContent = "Join";
+          return;
+        }
+
+        state.mpRoom = data.room;
+        state.mpColor = data.assignedColor;
+        state.orientation = data.assignedColor === "black" ? "b" : "w";
+        state.game = new Chess(data.room.fen);
+        startMpEventSource(data.room.id);
+        render();
+      } catch (err) {
+        console.error("Join game error:", err);
+        toast("Server error joining match.");
+        btnJoinCode.disabled = false;
+        btnJoinCode.textContent = "Join";
       }
-      state.mpRoom = null;
-      state.mpColor = null;
+    };
+  }
+
+  // Switch to Local Board
+  const btnSwitchLocal = document.getElementById("btnSwitchToLocal");
+  if (btnSwitchLocal) {
+    btnSwitchLocal.onclick = () => {
+      state.playMode = "local";
       render();
     };
   }
+}
 
-  const btnResign = document.getElementById("btnMpResign");
-  if (btnResign) {
-    btnResign.onclick = async () => {
-      if (!confirm("Are you sure you want to resign this match?")) return;
-      try {
-        await fetch(`/api/multiplayer/game/${state.mpRoom.id}/action`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "resign" })
-        });
-      } catch (e) {
-        toast("Failed to transmit resignation.");
+async function startMatchmaking(timeControl) {
+  state.isMatchmaking = true;
+  state.matchmakingElapsed = 0;
+  state.selectedTimeControl = timeControl;
+  render();
+
+  if (state.matchmakingTimer) clearInterval(state.matchmakingTimer);
+  state.matchmakingTimer = setInterval(() => {
+    state.matchmakingElapsed++;
+    const timerEl = document.getElementById("queueTime");
+    if (timerEl) {
+      timerEl.textContent = formatClock(state.matchmakingElapsed);
+    }
+  }, 1000);
+
+  try {
+    const res = await fetch("/api/multiplayer/matchmake", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ time_control: timeControl })
+    });
+    const data = await res.json();
+
+    if (!res.ok || data.status !== "success") {
+      toast(data.message || "Matchmaking error. Please try again.");
+      cancelMatchmakingUI();
+      return;
+    }
+
+    state.mpRoom = data.room;
+    state.mpColor = data.assignedColor;
+    state.orientation = data.assignedColor === "black" ? "b" : "w";
+    state.game = new Chess(data.room.fen || undefined);
+
+    startMpEventSource(data.room.id);
+
+    if (data.matched) {
+      // Instant match!
+      soundFx.gameEnd();
+      state.isMatchmaking = false;
+      if (state.matchmakingTimer) {
+        clearInterval(state.matchmakingTimer);
+        state.matchmakingTimer = null;
       }
-    };
+      toast("Opponent found! Match started!");
+      render();
+    }
+  } catch (err) {
+    console.error("Matchmaking error:", err);
+    toast("Server connection error during matchmaking.");
+    cancelMatchmakingUI();
+  }
+}
+
+async function cancelMatchmakingUI() {
+  state.isMatchmaking = false;
+  if (state.matchmakingTimer) {
+    clearInterval(state.matchmakingTimer);
+    state.matchmakingTimer = null;
   }
 
-  const btnDraw = document.getElementById("btnMpDraw");
-  if (btnDraw) {
-    btnDraw.onclick = async () => {
-      try {
-        const res = await fetch(`/api/multiplayer/game/${state.mpRoom.id}/action`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "offer_draw" })
-        });
-        if (res.ok) toast("Draw offer transmitted to opponent.");
-      } catch (e) {
-        toast("Failed to transmit draw offer.");
-      }
-    };
+  if (state.mpRoom && state.mpRoom.status === "waiting") {
+    try {
+      await fetch("/api/multiplayer/cancel-queue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ room_id: state.mpRoom.id })
+      });
+    } catch (e) {}
+
+    if (state.mpEventSource) {
+      state.mpEventSource.close();
+      state.mpEventSource = null;
+    }
+    state.mpRoom = null;
   }
 
-  const btnAcceptDraw = document.getElementById("btnAcceptDraw");
-  if (btnAcceptDraw) {
-    btnAcceptDraw.onclick = async () => {
-      try {
-        await fetch(`/api/multiplayer/game/${state.mpRoom.id}/action`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "accept_draw" })
-        });
-      } catch (e) {
-        toast("Failed to accept draw.");
-      }
-    };
-  }
-
-  const btnDeclineDraw = document.getElementById("btnDeclineDraw");
-  if (btnDeclineDraw) {
-    btnDeclineDraw.onclick = async () => {
-      try {
-        await fetch(`/api/multiplayer/game/${state.mpRoom.id}/action`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "decline_draw" })
-        });
-        render();
-      } catch (e) {
-        toast("Failed to decline draw.");
-      }
-    };
-  }
+  render();
 }
 
 async function loadOpenChallenges() {
@@ -2747,31 +2963,17 @@ if (state.page === "leaderboard") {
   // --------------------------------------------------
 
   if (state.page === "play") {
-    // Mode switcher buttons
-    const btnMultiplayer = document.getElementById("btnModeMultiplayer");
-    const btnLocal = document.getElementById("btnModeLocal");
-
-    if (btnMultiplayer) {
-      btnMultiplayer.onclick = () => {
-        state.playMode = "multiplayer";
-        render();
-      };
-    }
-
-    if (btnLocal) {
-      btnLocal.onclick = () => {
-        state.playMode = "local";
-        if (state.mpEventSource) {
-          state.mpEventSource.close();
-          state.mpEventSource = null;
-        }
-        state.mpRoom = null;
-        render();
-      };
-    }
-
     if (state.playMode === "local") {
       initGame();
+
+      const returnBtn = document.getElementById("btnReturnToOnline");
+      if (returnBtn) {
+        returnBtn.onclick = () => {
+          state.playMode = "multiplayer";
+          render();
+        };
+      }
+
       const newGameBtn = document.getElementById("newGame");
       if (newGameBtn) newGameBtn.onclick = initGame;
 
@@ -2810,7 +3012,7 @@ if (state.page === "leaderboard") {
         drawBtn.onclick = () => toast("Draw offer sent (local prototype).");
       }
     } else {
-      // Multiplayer mode initialization
+      // Multiplayer & Matchmaking mode
       initMultiplayerControls();
     }
   }
