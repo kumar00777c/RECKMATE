@@ -760,33 +760,47 @@ tr:last-child td{border-bottom:0}
    Chess.com Style Multiplayer Arena & Clock Styling
    ========================================================================== */
 /* PC UI View:
-   1. Reduce side cards by 50% to a compact 300px width.
-   2. Expand and fill the remaining area with the chessboard.
-   3. Expand the chessboard size about 10-15px to the left side.
+   1. The right-side cards are compact (300px).
+   2. The chessboard covers the card width completely (matching old UI size of 600px).
+   3. The board and card expand 14px to the left side.
 */
 @media (min-width: 861px) {
   .play-layout.chesscom-layout {
     display: grid;
-    grid-template-columns: 1fr 300px;
-    gap: 22px;
+    grid-template-columns: 620px 300px;
+    gap: 24px;
     align-items: start;
+    justify-content: start;
   }
 
   .chesscom-layout .board-shell {
     margin-left: -14px; /* Expand 10-15px to the left */
-    width: calc(100% + 14px);
-    padding: 12px 14px;
+    width: 620px;
+    max-width: 100%;
+    padding: 10px;
     box-sizing: border-box;
   }
 
   .chesscom-layout .board {
-    width: min(100%, 540px, 62vh);
+    width: 600px;
+    max-width: 100%;
     aspect-ratio: 1;
     margin: 0 auto;
+    border-radius: 8px;
   }
 
   .chesscom-layout .square {
-    font-size: clamp(26px, 4.8vh, 50px);
+    font-size: clamp(28px, 6vw, 56px);
+  }
+
+  .chesscom-layout .player-bar {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .chesscom-layout .game-over-banner {
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .chesscom-layout .chess-side {
