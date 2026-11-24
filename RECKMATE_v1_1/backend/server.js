@@ -152,6 +152,7 @@ setCookie(
     60 * 60 * 24 * 30
 );
 
+const userMeta = authData.user?.user_metadata || {};
 res.json({
     status: "success",
     message: "Login successful!",
@@ -161,7 +162,9 @@ res.json({
         full_name: profile.full_name,
         role: profile.role,
         rating: profile.rating,
-        must_change_password: profile.must_change_password
+        must_change_password: profile.must_change_password,
+        games: Number(userMeta.games) || 0,
+        wins: Number(userMeta.wins) || 0
     }
  });
 });
@@ -253,31 +256,46 @@ app.get("/api/session", async (req, res) => {
         });
     }
 
-    // Compute live games played & games won from Games table
+    // Compute games played & games won from Supabase user_metadata and Games table
     let gamesPlayed = 0;
     let gamesWon = 0;
     try {
         const adminSupabase = createSupabaseAdminClient();
-        if (adminSupabase) {
-            const { count: totalGames } = await adminSupabase
-                .from("Games")
-                .select("*", { count: "exact", head: true })
-                .or(`white_player_id.eq.${userId},black_player_id.eq.${userId}`);
+        if (adminSupabase && userId) {
+            // 1. Primary: Persistent auth user_metadata
+            const { data: authUserData } = await adminSupabase.auth.admin.getUserById(userId);
+            if (authUserData?.user?.user_metadata) {
+                gamesPlayed = Number(authUserData.user.user_metadata.games) || 0;
+                gamesWon = Number(authUserData.user.user_metadata.wins) || 0;
+            }
 
-            const { count: whiteWins } = await adminSupabase
-                .from("Games")
-                .select("*", { count: "exact", head: true })
-                .eq("white_player_id", userId)
-                .eq("winner", "white");
+            // 2. Supplement/Fallback: Games table count if present
+            try {
+                const { count: totalGames } = await adminSupabase
+                    .from("Games")
+                    .select("*", { count: "exact", head: true })
+                    .or(`white_player_id.eq.${userId},black_player_id.eq.${userId}`);
 
-            const { count: blackWins } = await adminSupabase
-                .from("Games")
-                .select("*", { count: "exact", head: true })
-                .eq("black_player_id", userId)
-                .eq("winner", "black");
+                const { count: whiteWins } = await adminSupabase
+                    .from("Games")
+                    .select("*", { count: "exact", head: true })
+                    .eq("white_player_id", userId)
+                    .eq("winner", "white");
 
-            gamesPlayed = totalGames || 0;
-            gamesWon = (whiteWins || 0) + (blackWins || 0);
+                const { count: blackWins } = await adminSupabase
+                    .from("Games")
+                    .select("*", { count: "exact", head: true })
+                    .eq("black_player_id", userId)
+                    .eq("winner", "black");
+
+                if (typeof totalGames === "number" && totalGames > gamesPlayed) {
+                    gamesPlayed = totalGames;
+                }
+                const dbWins = (whiteWins || 0) + (blackWins || 0);
+                if (dbWins > gamesWon) {
+                    gamesWon = dbWins;
+                }
+            } catch (_) {}
         }
     } catch (e) {
         console.warn("Could not calculate games stats:", e.message);

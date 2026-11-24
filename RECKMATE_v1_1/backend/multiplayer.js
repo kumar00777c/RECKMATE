@@ -578,13 +578,63 @@ class MultiplayerManager {
             }
 
             // 2. Automated Elo Rating Calculation
+            let ratingResult = null;
             if (room.white?.id && room.black?.id && room.winner) {
-                return await this.updatePlayerRatings(room.white.id, room.black.id, room.winner);
+                ratingResult = await this.updatePlayerRatings(room.white.id, room.black.id, room.winner);
             }
+
+            // 3. Automated Games & Wins Stats Calculation and Persistence
+            if (room.white?.id || room.black?.id) {
+                await this.updatePlayerStats(room.white?.id, room.black?.id, room.winner);
+            }
+
+            return ratingResult;
         } catch (err) {
             console.error("Game persist exception:", err);
         }
         return null;
+    }
+
+    async updatePlayerStats(whiteId, blackId, winner) {
+        if (!this.supabaseAdmin) return;
+        try {
+            const updateOne = async (userId, isWinner) => {
+                if (!userId) return;
+                try {
+                    const { data: userData, error: fetchErr } = await this.supabaseAdmin.auth.admin.getUserById(userId);
+                    if (fetchErr) {
+                        console.warn(`Could not fetch user ${userId} for stats:`, fetchErr.message);
+                        return;
+                    }
+                    const currentMeta = userData?.user?.user_metadata || {};
+                    const games = (Number(currentMeta.games) || 0) + 1;
+                    const wins = (Number(currentMeta.wins) || 0) + (isWinner ? 1 : 0);
+
+                    const { error: updateErr } = await this.supabaseAdmin.auth.admin.updateUserById(userId, {
+                        user_metadata: {
+                            ...currentMeta,
+                            games,
+                            wins
+                        }
+                    });
+
+                    if (updateErr) {
+                        console.warn(`Failed to update user_metadata stats for ${userId}:`, updateErr.message);
+                    } else {
+                        console.log(`[STATS UPDATED] User ${userId}: games=${games}, wins=${wins}`);
+                    }
+                } catch (userErr) {
+                    console.warn(`Stats update exception for ${userId}:`, userErr.message);
+                }
+            };
+
+            await Promise.all([
+                updateOne(whiteId, winner === "white"),
+                updateOne(blackId, winner === "black")
+            ]);
+        } catch (err) {
+            console.error("Player stats persist exception:", err);
+        }
     }
 
     async updatePlayerRatings(whiteId, blackId, winner) {

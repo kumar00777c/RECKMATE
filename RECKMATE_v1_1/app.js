@@ -1802,6 +1802,10 @@ function startMpEventSource(gameId) {
         if (data.winner === state.mpColor) {
           state.wins = (state.wins || 0) + 1;
         }
+        if (state.user) {
+          state.user.games = state.games;
+          state.user.wins = state.wins;
+        }
 
         render();
         const reasonText = data.termination === "abandonment"
