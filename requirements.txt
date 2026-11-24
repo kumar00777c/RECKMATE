@@ -1,0 +1,22 @@
+# RECKMATE Project Requirements & Setup Specification
+# Node.js Environment: Node.js >= 18.0.0, npm >= 9.0.0
+
+# ----------------------------------------------------
+# NPM Dependencies (managed via npm / package.json)
+# To install: npm run build   OR   cd RECKMATE_v1_1/backend && npm install
+# ----------------------------------------------------
+# @supabase/supabase-js>=2.112.3
+# express>=5.2.1
+# chess.js>=0.13.4
+# dotenv>=17.4.2
+# resend>=6.25.0
+
+# ----------------------------------------------------
+# Environment Variables required in RECKMATE_v1_1/backend/.env:
+# ----------------------------------------------------
+# PORT=3000
+# APP_URL=http://localhost:3000
+# SUPABASE_URL=https://your-project.supabase.co
+# SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_key
+# SUPABASE_SECRET_KEY=your_supabase_service_role_key
+# RESEND_API_KEY=your_resend_api_key
