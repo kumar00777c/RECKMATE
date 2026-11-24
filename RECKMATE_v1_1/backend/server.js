@@ -1231,6 +1231,41 @@ app.get("/api/multiplayer/open", (req, res) => {
     });
 });
 
+// 1b. Check if authenticated user has an active ongoing game (Auto-rejoin)
+app.get("/api/multiplayer/active-game", async (req, res) => {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) {
+        return res.status(401).json({ status: "error", message: "Not authenticated." });
+    }
+
+    const active = multiplayerManager.findActiveMatchForUser(user.id);
+    if (!active) {
+        return res.json({ status: "success", hasActiveGame: false });
+    }
+
+    res.json({
+        status: "success",
+        hasActiveGame: true,
+        room: active.room.getState(),
+        assignedColor: active.color,
+        isCompleted: !!active.isCompleted
+    });
+});
+
+// 1c. Dismiss completed game so user returns to lobby cleanly
+app.post("/api/multiplayer/dismiss-game", async (req, res) => {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) {
+        return res.status(401).json({ status: "error", message: "Not authenticated." });
+    }
+
+    const { roomId } = req.body || {};
+    if (roomId) {
+        multiplayerManager.dismissGame(user.id, roomId);
+    }
+    res.json({ status: "success" });
+});
+
 // 2. Create a multiplayer room
 app.post("/api/multiplayer/create", async (req, res) => {
     const user = await getAuthenticatedUser(req, res);
@@ -1285,6 +1320,9 @@ app.get("/api/multiplayer/game/:id/stream", async (req, res) => {
         return res.status(404).json({ status: "error", message: "Game not found." });
     }
 
+    const user = await getAuthenticatedUser(req, res);
+    const userId = user ? user.id : null;
+
     // Set headers for Server-Sent Events
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -1305,7 +1343,7 @@ app.get("/api/multiplayer/game/:id/stream", async (req, res) => {
         clearInterval(pingInterval);
     });
 
-    room.addClient(res);
+    room.addClient(res, userId);
 });
 
 // 5. Submit Move

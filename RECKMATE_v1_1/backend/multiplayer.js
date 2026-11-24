@@ -12,13 +12,13 @@ class GameRoom {
         this.initialSeconds = (mins || 10) * 60;
         this.increment = inc || 0;
 
-        this.white = null; // { id, username, connected: true }
-        this.black = null; // { id, username, connected: true }
+        this.white = null; // { id, username, rating: 1000, connected: true, disconnectedAt: null }
+        this.black = null; // { id, username, rating: 1000, connected: true, disconnectedAt: null }
 
         this.chess = new Chess();
         this.status = "waiting"; // "waiting", "active", "completed"
         this.winner = null; // "white", "black", "draw"
-        this.termination = null; // "checkmate", "resignation", "timeout", "draw_agreement"
+        this.termination = null; // "checkmate", "resignation", "timeout", "abandonment", "draw_agreement"
 
         this.whiteTime = this.initialSeconds;
         this.blackTime = this.initialSeconds;
@@ -26,17 +26,25 @@ class GameRoom {
         this.clockInterval = null;
 
         this.drawOfferedBy = null; // "white" or "black"
-        this.clients = new Set(); // SSE response connections
+        this.clients = new Map(); // res -> userId
         this.createdAt = Date.now();
+        this.endedAt = null;
+        this.disconnectLimitSeconds = 60; // 1 minute disconnect forfeit limit
+        this.disconnectTimer = null;
     }
 
     addPlayer(user, preferredColor = "random") {
+        const rating = user.rating || 1000;
         if (this.white && this.white.id === user.id) {
             this.white.username = user.username;
+            this.white.rating = rating;
+            this.handlePlayerReconnect("white");
             return "white";
         }
         if (this.black && this.black.id === user.id) {
             this.black.username = user.username;
+            this.black.rating = rating;
+            this.handlePlayerReconnect("black");
             return "black";
         }
 
@@ -45,22 +53,22 @@ class GameRoom {
                               : preferredColor === "black" ? false
                               : Math.random() < 0.5;
             if (assignWhite) {
-                this.white = { id: user.id, username: user.username, connected: true };
+                this.white = { id: user.id, username: user.username, rating, connected: true, disconnectedAt: null };
                 return "white";
             } else {
-                this.black = { id: user.id, username: user.username, connected: true };
+                this.black = { id: user.id, username: user.username, rating, connected: true, disconnectedAt: null };
                 return "black";
             }
         }
 
         if (!this.white) {
-            this.white = { id: user.id, username: user.username, connected: true };
+            this.white = { id: user.id, username: user.username, rating, connected: true, disconnectedAt: null };
             this.startGame();
             return "white";
         }
 
         if (!this.black) {
-            this.black = { id: user.id, username: user.username, connected: true };
+            this.black = { id: user.id, username: user.username, rating, connected: true, disconnectedAt: null };
             this.startGame();
             return "black";
         }
@@ -90,18 +98,96 @@ class GameRoom {
             const now = Date.now();
             const elapsed = Math.floor((now - this.lastMoveTimestamp) / 1000);
 
+            // 1. Live game clock check
+            let whiteRemaining = this.whiteTime;
+            let blackRemaining = this.blackTime;
+
             if (this.chess.turn() === "w") {
-                const currentWhiteTime = Math.max(0, this.whiteTime - elapsed);
-                if (currentWhiteTime <= 0) {
+                whiteRemaining = Math.max(0, this.whiteTime - elapsed);
+                if (whiteRemaining <= 0) {
+                    this.whiteTime = 0;
                     this.endGame("black", "timeout");
+                    return;
                 }
             } else {
-                const currentBlackTime = Math.max(0, this.blackTime - elapsed);
-                if (currentBlackTime <= 0) {
+                blackRemaining = Math.max(0, this.blackTime - elapsed);
+                if (blackRemaining <= 0) {
+                    this.blackTime = 0;
                     this.endGame("white", "timeout");
+                    return;
                 }
             }
+
+            // 2. Disconnect 1-minute grace countdown check (Rule: >1 min disconnected = forfeit)
+            if (this.white && !this.white.connected && this.white.disconnectedAt) {
+                const dcSecs = Math.floor((now - this.white.disconnectedAt) / 1000);
+                if (dcSecs >= this.disconnectLimitSeconds) {
+                    this.endGame("black", "abandonment");
+                    return;
+                }
+            }
+
+            if (this.black && !this.black.connected && this.black.disconnectedAt) {
+                const dcSecs = Math.floor((now - this.black.disconnectedAt) / 1000);
+                if (dcSecs >= this.disconnectLimitSeconds) {
+                    this.endGame("white", "abandonment");
+                    return;
+                }
+            }
+
+            // Broadcast periodic clock tick (every second) so clients stay 100% in sync
+            this.broadcast({
+                type: "clock_tick",
+                whiteTime: Math.round(whiteRemaining),
+                blackTime: Math.round(blackRemaining),
+                turn: this.chess.turn(),
+                whiteDisconnectedSecs: this.white && !this.white.connected && this.white.disconnectedAt ? Math.max(0, this.disconnectLimitSeconds - Math.floor((now - this.white.disconnectedAt) / 1000)) : null,
+                blackDisconnectedSecs: this.black && !this.black.connected && this.black.disconnectedAt ? Math.max(0, this.disconnectLimitSeconds - Math.floor((now - this.black.disconnectedAt) / 1000)) : null
+            });
         }, 1000);
+    }
+
+    handlePlayerDisconnect(userId) {
+        if (this.status !== "active") return;
+        const now = Date.now();
+        if (this.white && this.white.id === userId && this.white.connected) {
+            this.white.connected = false;
+            this.white.disconnectedAt = now;
+            this.broadcast({
+                type: "player_disconnected",
+                color: "white",
+                graceSeconds: this.disconnectLimitSeconds,
+                state: this.getState()
+            });
+        }
+        if (this.black && this.black.id === userId && this.black.connected) {
+            this.black.connected = false;
+            this.black.disconnectedAt = now;
+            this.broadcast({
+                type: "player_disconnected",
+                color: "black",
+                graceSeconds: this.disconnectLimitSeconds,
+                state: this.getState()
+            });
+        }
+    }
+
+    handlePlayerReconnect(color) {
+        if (color === "white" && this.white) {
+            this.white.connected = true;
+            this.white.disconnectedAt = null;
+        }
+        if (color === "black" && this.black) {
+            this.black.connected = true;
+            this.black.disconnectedAt = null;
+        }
+        if (this.status === "active") {
+            this.broadcast({
+                type: "player_reconnected",
+                color: color,
+                state: this.getState()
+            });
+        }
     }
 
     makeMove(userId, move) {
@@ -209,6 +295,7 @@ class GameRoom {
         this.status = "completed";
         this.winner = winner;
         this.termination = termination;
+        this.endedAt = Date.now();
 
         if (this.clockInterval) {
             clearInterval(this.clockInterval);
@@ -227,10 +314,30 @@ class GameRoom {
         }
     }
 
-    addClient(res) {
-        this.clients.add(res);
+    addClient(res, userId) {
+        this.clients.set(res, userId);
+
+        if (this.white && this.white.id === userId) {
+            this.handlePlayerReconnect("white");
+        } else if (this.black && this.black.id === userId) {
+            this.handlePlayerReconnect("black");
+        }
+
         res.on("close", () => {
+            const uid = this.clients.get(res);
             this.clients.delete(res);
+
+            // Check if user has no other open tabs/connections to this room
+            let stillConnected = false;
+            for (const otherUid of this.clients.values()) {
+                if (otherUid === uid) {
+                    stillConnected = true;
+                    break;
+                }
+            }
+            if (!stillConnected && uid) {
+                this.handlePlayerDisconnect(uid);
+            }
         });
 
         // Send immediate initial sync
@@ -239,7 +346,7 @@ class GameRoom {
 
     broadcast(data) {
         const payload = `data: ${JSON.stringify(data)}\n\n`;
-        for (const client of this.clients) {
+        for (const client of this.clients.keys()) {
             try {
                 client.write(payload);
             } catch (err) {
@@ -276,7 +383,8 @@ class GameRoom {
             blackTime: Math.round(blackRemaining),
             winner: this.winner,
             termination: this.termination,
-            drawOfferedBy: this.drawOfferedBy
+            drawOfferedBy: this.drawOfferedBy,
+            endedAt: this.endedAt
         };
     }
 }
@@ -286,6 +394,7 @@ class MultiplayerManager {
         this.supabaseAdmin = supabaseAdmin;
         this.rooms = new Map(); // roomId -> GameRoom
         this.roomsByCode = new Map(); // roomCode -> roomId
+        this.dismissedGamesByUser = new Map(); // userId -> Set of roomIds
     }
 
     createRoom(user, options = {}) {
@@ -392,6 +501,40 @@ class MultiplayerManager {
 
     getRoom(roomId) {
         return this.rooms.get(roomId);
+    }
+
+    dismissGame(userId, roomId) {
+        if (!this.dismissedGamesByUser.has(userId)) {
+            this.dismissedGamesByUser.set(userId, new Set());
+        }
+        this.dismissedGamesByUser.get(userId).add(roomId);
+    }
+
+    isGameDismissed(userId, roomId) {
+        return this.dismissedGamesByUser.has(userId) && this.dismissedGamesByUser.get(userId).has(roomId);
+    }
+
+    findActiveMatchForUser(userId) {
+        // 1. Look for active ongoing game
+        for (const room of this.rooms.values()) {
+            if (room.status === "active" && ((room.white && room.white.id === userId) || (room.black && room.black.id === userId))) {
+                const color = room.white && room.white.id === userId ? "white" : "black";
+                return { room, color, isCompleted: false };
+            }
+        }
+
+        // 2. Look for recently completed game (within 10 minutes) that user hasn't dismissed yet
+        const now = Date.now();
+        for (const room of this.rooms.values()) {
+            if (room.status === "completed" && !this.isGameDismissed(userId, room.id) && ((room.white && room.white.id === userId) || (room.black && room.black.id === userId))) {
+                if (room.endedAt && (now - room.endedAt) < 10 * 60 * 1000) {
+                    const color = room.white && room.white.id === userId ? "white" : "black";
+                    return { room, color, isCompleted: true };
+                }
+            }
+        }
+
+        return null;
     }
 
     async persistGame(room) {

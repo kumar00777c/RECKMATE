@@ -102,10 +102,14 @@ function saveStats(){
 
 function nav(page){ location.hash = page; }
 
-window.addEventListener("hashchange",()=>{
+window.addEventListener("hashchange", async () => {
   state.page = location.hash.slice(1) || "home";
   state.selected = null;
   state.puzzleSelected = null;
+  if (state.page === "play" && !state.mpRoom && !state.isMatchmaking) {
+    const hasActive = await checkActiveMultiplayerGame();
+    if (hasActive) return;
+  }
   render();
 });
 
@@ -1328,30 +1332,156 @@ function arenaHubView() {
 function liveMultiplayerView() {
   const room = state.mpRoom;
   const isWhite = state.mpColor === "white";
-  const whiteName = room.white ? room.white.username : "Waiting for player...";
-  const blackName = room.black ? room.black.username : "Waiting for player...";
   const isCompleted = room.status === "completed";
 
+  // Chess.com style player orientation:
+  // If player is White: Opponent is Black (Top), Player is White (Bottom)
+  // If player is Black: Opponent is White (Top), Player is Black (Bottom)
+  const topPlayer = isWhite ? room.black : room.white;
+  const bottomPlayer = isWhite ? room.white : room.black;
+
+  const topColorName = isWhite ? "Black" : "White";
+  const bottomColorName = isWhite ? "White" : "Black";
+  const topColorPiece = isWhite ? "⚫" : "⚪";
+  const bottomColorPiece = isWhite ? "⚪" : "⚫";
+
+  const topName = topPlayer ? topPlayer.username : "Waiting for opponent...";
+  const bottomName = bottomPlayer ? bottomPlayer.username : (state.user?.username || "You");
+  const topRating = topPlayer ? (topPlayer.rating || 1000) : 1000;
+  const bottomRating = bottomPlayer ? (bottomPlayer.rating || state.user?.rating || 1000) : (state.user?.rating || 1000);
+
+  const isTopTurn = (room.turn === "b" && isWhite) || (room.turn === "w" && !isWhite);
+  const isBottomTurn = (room.turn === "w" && isWhite) || (room.turn === "b" && !isWhite);
+
+  const topClockVal = isWhite ? room.blackTime : room.whiteTime;
+  const bottomClockVal = isWhite ? room.whiteTime : room.blackTime;
+  const topClockId = isWhite ? "blackClock" : "whiteClock";
+  const bottomClockId = isWhite ? "whiteClock" : "blackClock";
+
+  // Elo gain/loss prediction display (+8 / -8, etc.)
+  const diffForUser = topRating - bottomRating;
+  const expectedUserScore = 1 / (1 + Math.pow(10, diffForUser / 400));
+  const userGainOnWin = "+" + Math.max(1, Math.round(16 * (1 - expectedUserScore)));
+  const userLossOnLoss = "-" + Math.max(1, Math.round(16 * expectedUserScore));
+
+  const expectedOppScore = 1 - expectedUserScore;
+  const oppGainOnWin = "+" + Math.max(1, Math.round(16 * (1 - expectedOppScore)));
+  const oppLossOnLoss = "-" + Math.max(1, Math.round(16 * expectedOppScore));
+
+  // Disconnection warning banner
+  let dcWarning = "";
+  if (topPlayer && !topPlayer.connected && room.status === "active") {
+    dcWarning = `
+      <div class="dc-warning-banner">
+        ⚠️ Opponent disconnected! Auto-forfeit in <span id="dcCountdown">60s</span>
+      </div>
+    `;
+  }
+
+  // Game over announcement banner
+  let gameOverBanner = "";
+  if (isCompleted) {
+    const isWinner = room.winner === state.mpColor;
+    const isDraw = room.winner === "draw" || !room.winner;
+    let title = "";
+    let sub = "";
+
+    if (isDraw) {
+      title = "🤝 Match Drawn";
+      sub = room.termination === "draw_agreement" ? "By mutual agreement" : `Ended by ${room.termination}`;
+    } else if (isWinner) {
+      title = "🏆 Victory!";
+      if (room.termination === "abandonment") {
+        sub = `Opponent (${topName}) disconnected for more than 1 minute. You win by forfeit!`;
+      } else if (room.termination === "timeout") {
+        sub = `Opponent's clock reached 0:00. You win on time!`;
+      } else if (room.termination === "resignation") {
+        sub = `Opponent resigned.`;
+      } else {
+        sub = `Checkmate! You won the game.`;
+      }
+    } else {
+      title = "❌ Defeat";
+      if (room.termination === "abandonment") {
+        sub = `You were disconnected for more than 1 minute. Declared lost by abandonment.`;
+      } else if (room.termination === "timeout") {
+        sub = `Your clock hit 0:00. You lost on time.`;
+      } else if (room.termination === "resignation") {
+        sub = `You resigned the match.`;
+      } else {
+        sub = `Checkmate! Opponent won the game.`;
+      }
+    }
+
+    gameOverBanner = `
+      <div class="game-over-banner ${isDraw ? 'banner-draw' : isWinner ? 'banner-win' : 'banner-loss'}">
+        <h3>${title}</h3>
+        <p>${sub}</p>
+      </div>
+    `;
+  }
+
   return `
-    <div class="play-layout">
+    <div class="play-layout chesscom-layout">
       <div class="board-shell">
+        ${gameOverBanner}
+        ${dcWarning}
+
+        <!-- Top Player (Opponent) Bar -->
+        <div class="player-bar top-player ${isTopTurn && room.status==='active' ? 'active-turn' : ''}">
+          <div class="player-info">
+            <span class="mini-avatar">${initials(topName)}</span>
+            <div class="player-meta">
+              <span class="player-name">${topColorPiece} ${topName}</span>
+              <span class="player-rating">(${topRating})</span>
+              <span class="elo-badge" style="color:var(--muted); font-size:11px; margin-left:4px;">win: ${oppGainOnWin} / loss: ${oppLossOnLoss}</span>
+            </div>
+          </div>
+          <div class="player-clock ${isTopTurn && room.status==='active' ? 'ticking' : ''}">
+            <b id="${topClockId}">${formatClock(topClockVal)}</b>
+          </div>
+        </div>
+
+        <!-- Chessboard Mount -->
         <div id="boardMount"></div>
-        <div id="boardStatus" class="board-status">
+
+        <!-- Bottom Player (User) Bar -->
+        <div class="player-bar bottom-player ${isBottomTurn && room.status==='active' ? 'active-turn' : ''}">
+          <div class="player-info">
+            <span class="mini-avatar">${initials(bottomName)}</span>
+            <div class="player-meta">
+              <span class="player-name">${bottomColorPiece} ${bottomName}</span>
+              <span class="player-rating">(${bottomRating})</span>
+              <span class="elo-badge" style="color:var(--accent); font-size:11px; margin-left:4px;">win: ${userGainOnWin} / loss: ${userLossOnLoss}</span>
+            </div>
+          </div>
+          <div class="player-clock ${isBottomTurn && room.status==='active' ? 'ticking' : ''}">
+            <b id="${bottomClockId}">${formatClock(bottomClockVal)}</b>
+          </div>
+        </div>
+
+        <div id="boardStatus" class="board-status" style="margin-top:12px;">
           ${room.status === 'waiting'
             ? `Waiting for opponent to join. Share room code: <b style="color:var(--accent); font-size:18px; letter-spacing:1px;">${room.code}</b>`
             : isCompleted
             ? `Game Over: ${room.winner ? room.winner.toUpperCase() + ' won by ' + room.termination : 'Draw'}`
-            : 'Match in progress.'}
+            : (isBottomTurn ? 'Your turn! Make a move.' : "Opponent's turn. Thinking...")}
         </div>
-        <div class="actions">
+
+        <!-- In-game Actions (NO LEAVE MATCH OPTION, NO UNDO) -->
+        <div class="actions" style="margin-top:12px;">
           <button class="btn" id="flip">Flip Board</button>
           ${isCompleted
-            ? `<button class="btn primary" id="btnPlayAgain">⚔️ New Game / Play Again</button>`
-            : `<button class="btn" id="btnLeaveGame">Leave Match</button>`
+            ? `<button class="btn primary" id="btnPlayAgain">⚔️ Back to Arena / New Match</button>`
+            : `
+              <button class="btn" id="btnMpDraw" ${room.status!=='active' || room.drawOfferedBy?'disabled':''}>Offer Draw</button>
+              <button class="btn" id="btnMpResign" style="color:#ef4444;" ${room.status!=='active'?'disabled':''}>Resign</button>
+            `
           }
         </div>
       </div>
 
+      <!-- Side Panel: Room Info & Moves -->
       <div class="chess-side">
         <div class="card" style="margin-bottom: 14px;">
           <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -1360,21 +1490,10 @@ function liveMultiplayerView() {
           </div>
         </div>
 
-        <div class="clock">
-          <div style="${room.turn==='b' && room.status==='active' ? 'border:1px solid var(--accent);' : ''}">
-            <span class="muted">⚫ ${blackName}</span>
-            <b id="blackClock">${formatClock(room.blackTime)}</b>
-          </div>
-          <div style="${room.turn==='w' && room.status==='active' ? 'border:1px solid var(--accent);' : ''}">
-            <span class="muted">⚪ ${whiteName}</span>
-            <b id="whiteClock">${formatClock(room.whiteTime)}</b>
-          </div>
-        </div>
-
         <div class="card">
           <span class="turn-badge" id="turnBadge">${room.status === 'waiting' ? 'Waiting for opponent' : isCompleted ? 'Game Over' : (room.turn === 'w' ? 'White to move' : 'Black to move')}</span>
           <div style="margin: 12px 0 6px; font-size: 14px;">
-            You are playing as: <b style="color:var(--accent); text-transform:capitalize;">${state.mpColor || 'Spectator'}</b>
+            Playing as: <b style="color:var(--accent); text-transform:capitalize;">${state.mpColor || 'Spectator'}</b>
           </div>
 
           ${room.drawOfferedBy && room.drawOfferedBy !== state.mpColor && !isCompleted ? `
@@ -1386,12 +1505,6 @@ function liveMultiplayerView() {
               </div>
             </div>
           ` : ''}
-
-          <!-- ABSOLUTELY NO UNDO BUTTON IN MULTIPLAYER MATCH -->
-          <div class="actions" style="margin-top: 14px;">
-            <button class="btn" id="btnMpResign" ${room.status!=='active'?'disabled':''}>Resign</button>
-            <button class="btn" id="btnMpDraw" ${room.status!=='active' || room.drawOfferedBy?'disabled':''}>Offer Draw</button>
-          </div>
         </div>
 
         <div class="card">
@@ -1585,6 +1698,31 @@ function startMpEventSource(gameId) {
         }
         renderPlayBoard();
         updateClocks(data.state.whiteTime, data.state.blackTime);
+        startActiveClockTimer();
+      } else if (data.type === "clock_tick") {
+        // High-precision server clock heartbeat
+        if (state.mpRoom && state.mpRoom.status === "active") {
+          state.mpRoom.whiteTime = data.whiteTime;
+          state.mpRoom.blackTime = data.blackTime;
+          updateClocks(data.whiteTime, data.blackTime);
+
+          // Update disconnect grace countdown if opponent is disconnected
+          const dcSpan = document.getElementById("dcCountdown");
+          if (dcSpan) {
+            const secs = state.mpColor === "white" ? data.blackDisconnectedSecs : data.whiteDisconnectedSecs;
+            if (typeof secs === "number") {
+              dcSpan.textContent = `${secs}s`;
+            }
+          }
+        }
+      } else if (data.type === "player_disconnected") {
+        state.mpRoom = data.state;
+        renderPlayBoard();
+        toast("Opponent lost connection! 60s countdown started.");
+      } else if (data.type === "player_reconnected") {
+        state.mpRoom = data.state;
+        renderPlayBoard();
+        toast("Opponent reconnected!");
       } else if (data.type === "game_started") {
         // Match found and started!
         if (state.isMatchmaking) {
@@ -1599,15 +1737,21 @@ function startMpEventSource(gameId) {
         soundFx.gameEnd();
         toast("Opponent joined! Match started!");
         render();
+        startActiveClockTimer();
       } else if (data.type === "game_over") {
+        stopActiveClockTimer();
         state.mpRoom = data.state;
         state.game.load(data.state.fen);
         soundFx.gameEnd();
         render();
-        const msg = data.winner ? `${data.winner.toUpperCase()} won by ${data.termination}!` : `Game ended in a draw!`;
-        toast(msg);
-      } else if (data.type === "draw_offered") {
-        const msg = data.winner ? `${data.winner.toUpperCase()} won by ${data.termination}!` : `Game ended in a draw!`;
+        const reasonText = data.termination === "abandonment"
+          ? "by Disconnection / Abandonment"
+          : data.termination === "timeout"
+          ? "on Time (Clock hit 0:00)"
+          : `by ${data.termination}`;
+        const msg = data.winner
+          ? `${data.winner.toUpperCase()} won ${reasonText}!`
+          : `Game ended in a draw!`;
         toast(msg);
       } else if (data.type === "draw_offered") {
         if (data.by !== state.mpColor) {
@@ -1637,6 +1781,40 @@ function updateClocks(wTime, bTime) {
   if (bEl) bEl.textContent = formatClock(bTime);
 }
 
+function startActiveClockTimer() {
+  stopActiveClockTimer();
+  if (!state.mpRoom || state.mpRoom.status !== "active") return;
+
+  state.mpClockTimer = setInterval(() => {
+    if (!state.mpRoom || state.mpRoom.status !== "active") {
+      stopActiveClockTimer();
+      return;
+    }
+
+    const turn = state.mpRoom.turn;
+    if (turn === "w") {
+      state.mpRoom.whiteTime = Math.max(0, state.mpRoom.whiteTime - 1);
+      updateClocks(state.mpRoom.whiteTime, state.mpRoom.blackTime);
+      if (state.mpRoom.whiteTime <= 0) {
+        stopActiveClockTimer();
+      }
+    } else {
+      state.mpRoom.blackTime = Math.max(0, state.mpRoom.blackTime - 1);
+      updateClocks(state.mpRoom.whiteTime, state.mpRoom.blackTime);
+      if (state.mpRoom.blackTime <= 0) {
+        stopActiveClockTimer();
+      }
+    }
+  }, 1000);
+}
+
+function stopActiveClockTimer() {
+  if (state.mpClockTimer) {
+    clearInterval(state.mpClockTimer);
+    state.mpClockTimer = null;
+  }
+}
+
 function initMultiplayerControls() {
   // 1. In Matchmaking Queue
   if (state.isMatchmaking) {
@@ -1661,31 +1839,25 @@ function initMultiplayerControls() {
 
     const btnPlayAgain = document.getElementById("btnPlayAgain");
     if (btnPlayAgain) {
-      btnPlayAgain.onclick = () => {
+      btnPlayAgain.onclick = async () => {
+        const roomId = state.mpRoom ? state.mpRoom.id : null;
         if (state.mpEventSource) {
           state.mpEventSource.close();
           state.mpEventSource = null;
         }
+        stopActiveClockTimer();
         state.mpRoom = null;
         state.mpColor = null;
         state.isMatchmaking = false;
-        render();
-      };
-    }
-
-    const btnLeave = document.getElementById("btnLeaveGame");
-    if (btnLeave) {
-      btnLeave.onclick = () => {
-        if (state.mpRoom.status === "active" && !confirm("Leave active match? You can re-enter with the room code if it is still ongoing.")) {
-          return;
+        if (roomId) {
+          try {
+            await fetch("/api/multiplayer/dismiss-game", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ roomId })
+            });
+          } catch (e) {}
         }
-        if (state.mpEventSource) {
-          state.mpEventSource.close();
-          state.mpEventSource = null;
-        }
-        state.mpRoom = null;
-        state.mpColor = null;
-        state.isMatchmaking = false;
         render();
       };
     }
@@ -2833,6 +3005,32 @@ function initResetPassword() {
   };
 }
 
+async function checkActiveMultiplayerGame() {
+  if (!state.loggedIn || state.mpRoom || state.isMatchmaking) return false;
+  try {
+    const res = await fetch("/api/multiplayer/active-game");
+    if (!res.ok) return false;
+    const data = await res.json();
+    if (data.status === "success" && data.hasActiveGame && data.room) {
+      state.mpRoom = data.room;
+      state.mpColor = data.assignedColor;
+      state.orientation = data.assignedColor === "black" ? "b" : "w";
+      state.game = new Chess(data.room.fen);
+      state.playMode = "multiplayer";
+      state.page = "play";
+      location.hash = "play";
+      startMpEventSource(data.room.id);
+      if (data.room.status === "active") {
+        startActiveClockTimer();
+      }
+      return true;
+    }
+  } catch (err) {
+    console.error("Failed to check active multiplayer game:", err);
+  }
+  return false;
+}
+
 async function checkSession() {
   try {
     const response = await fetch("/api/session");
@@ -2854,6 +3052,9 @@ async function checkSession() {
       state.rating = data.user.rating;
       state.forcePasswordChange =
       data.user.must_change_password === true;
+
+      // Auto-rejoin active or recently ended game immediately
+      await checkActiveMultiplayerGame();
     } else {
       state.loggedIn = false;
       state.user = null;
