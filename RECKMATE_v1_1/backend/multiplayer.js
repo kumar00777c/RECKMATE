@@ -290,7 +290,7 @@ class GameRoom {
         return { success: false, message: "Unknown action." };
     }
 
-    endGame(winner, termination) {
+    async endGame(winner, termination) {
         if (this.status === "completed") return;
         this.status = "completed";
         this.winner = winner;
@@ -302,16 +302,31 @@ class GameRoom {
             this.clockInterval = null;
         }
 
+        let ratingData = null;
+        if (this.onGameEnd) {
+            try {
+                ratingData = await this.onGameEnd(this);
+            } catch (err) {
+                console.error("Error in onGameEnd:", err);
+            }
+        }
+
+        if (ratingData) {
+            if (this.white && ratingData.white) {
+                this.white.rating = ratingData.white.newRating;
+            }
+            if (this.black && ratingData.black) {
+                this.black.rating = ratingData.black.newRating;
+            }
+        }
+
         this.broadcast({
             type: "game_over",
             winner: this.winner,
             termination: this.termination,
-            state: this.getState()
+            state: this.getState(),
+            ratingData: ratingData
         });
-
-        if (this.onGameEnd) {
-            this.onGameEnd(this);
-        }
     }
 
     addClient(res, userId) {
@@ -401,8 +416,8 @@ class MultiplayerManager {
         const id = "game_" + Date.now() + "_" + Math.random().toString(36).substring(2, 8);
         const room = new GameRoom(id, options);
 
-        room.onGameEnd = (finishedRoom) => {
-            this.persistGame(finishedRoom);
+        room.onGameEnd = async (finishedRoom) => {
+            return await this.persistGame(finishedRoom);
         };
 
         const color = room.addPlayer(user, options.preferredColor || "random");
@@ -564,11 +579,12 @@ class MultiplayerManager {
 
             // 2. Automated Elo Rating Calculation
             if (room.white?.id && room.black?.id && room.winner) {
-                await this.updatePlayerRatings(room.white.id, room.black.id, room.winner);
+                return await this.updatePlayerRatings(room.white.id, room.black.id, room.winner);
             }
         } catch (err) {
             console.error("Game persist exception:", err);
         }
+        return null;
     }
 
     async updatePlayerRatings(whiteId, blackId, winner) {
@@ -579,12 +595,12 @@ class MultiplayerManager {
                 .select("id, rating")
                 .in("id", [whiteId, blackId]);
 
-            if (error || !profiles || profiles.length < 2) return;
+            if (error || !profiles || profiles.length < 2) return null;
 
             const whiteProfile = profiles.find(p => p.id === whiteId);
             const blackProfile = profiles.find(p => p.id === blackId);
 
-            if (!whiteProfile || !blackProfile) return;
+            if (!whiteProfile || !blackProfile) return null;
 
             const rw = whiteProfile.rating || 1000;
             const rb = blackProfile.rating || 1000;
@@ -612,8 +628,14 @@ class MultiplayerManager {
             ]);
 
             console.log(`[ELO UPDATED] White (${whiteId}): ${rw} -> ${newWhiteRating} | Black (${blackId}): ${rb} -> ${newBlackRating}`);
+
+            return {
+                white: { id: whiteId, oldRating: rw, newRating: newWhiteRating, diff: newWhiteRating - rw },
+                black: { id: blackId, oldRating: rb, newRating: newBlackRating, diff: newBlackRating - rb }
+            };
         } catch (err) {
             console.error("Error updating player ratings:", err);
+            return null;
         }
     }
 }

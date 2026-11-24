@@ -1469,8 +1469,10 @@ function liveMultiplayerView() {
         </div>
 
         <!-- In-game Actions (NO LEAVE MATCH OPTION, NO UNDO) -->
-        <div class="actions" style="margin-top:12px;">
-          <button class="btn" id="flip">Flip Board</button>
+        <div class="actions" style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          <button class="btn" id="flip" title="Flip Board">🔄 Flip</button>
+          <button class="btn" id="btnReduceBoard" title="Reduce Board Size" style="padding:6px 12px; font-size:12px;">🔍 Smaller</button>
+          <button class="btn" id="btnExpandBoard" title="Expand Board Size" style="padding:6px 12px; font-size:12px;">🔍 Larger</button>
           ${isCompleted
             ? `<button class="btn primary" id="btnPlayAgain">⚔️ Back to Arena / New Match</button>`
             : `
@@ -1508,8 +1510,20 @@ function liveMultiplayerView() {
         </div>
 
         <div class="card">
-          <h3>Moves</h3>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <h3 style="margin:0;">Moves</h3>
+            <span class="muted" style="font-size:12px;" id="moveCount"></span>
+          </div>
           <div class="moves" id="moves"></div>
+          ${isCompleted ? `
+            <div class="pgn-container" style="margin-top:14px; padding-top:12px; border-top:1px solid var(--border);">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <span style="font-weight:600; font-size:13px; color:var(--text);">Game PGN</span>
+                <button class="btn primary" id="btnCopyPgn" style="padding:4px 12px; font-size:12px;">📋 Copy PGN</button>
+              </div>
+              <textarea id="pgnBox" readonly style="width:100%; height:76px; font-size:11px; font-family:monospace; background:var(--panel2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:8px; resize:none;">${state.game.pgn() || room.pgn || 'No PGN available'}</textarea>
+            </div>
+          ` : ''}
         </div>
       </div>
     </div>
@@ -1564,6 +1578,35 @@ function formatClock(seconds) {
   return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 }
 
+function loadGameState(fen, pgn) {
+  if (pgn) {
+    try {
+      const ok = state.game.load_pgn(pgn);
+      if (ok) return;
+    } catch (e) {}
+  }
+  if (fen) {
+    try {
+      state.game.load(fen);
+    } catch (e) {}
+  }
+}
+
+function applyBoardScale(scale) {
+  const mount = document.getElementById("boardMount");
+  if (!mount) return;
+  const boardEl = mount.querySelector(".board");
+  if (boardEl) {
+    if (window.innerWidth <= 860) {
+      boardEl.style.width = "100%";
+    } else {
+      const baseVh = 52;
+      const basePx = 460;
+      boardEl.style.width = `min(100%, ${(basePx * scale).toFixed(0)}px, ${(baseVh * scale).toFixed(1)}vh)`;
+    }
+  }
+}
+
 function initGame(){
   state.game = new Chess();
   state.selected = null;
@@ -1582,18 +1625,34 @@ function renderPlayBoard(){
   }));
 
   const history=state.game.history();
-  document.getElementById("moves").innerHTML = history.length
-  ? Array.from({length: Math.ceil(history.length / 2)}, (_, i) => {
-      const white = history[i * 2] || "";
-      const black = history[i * 2 + 1] || "";
+  const movesEl = document.getElementById("moves");
+  if (movesEl) {
+    movesEl.innerHTML = history.length
+      ? Array.from({length: Math.ceil(history.length / 2)}, (_, i) => {
+          const white = history[i * 2] || "";
+          const black = history[i * 2 + 1] || "";
 
-      return `<div class="move-row">
-        <b>${i + 1}.</b>
-        <span>${white}</span>
-        <span>${black}</span>
-      </div>`;
-    }).join("")
-  : `<div class="muted" style="padding:12px">No moves yet.</div>`;
+          return `<div class="move-row">
+            <b>${i + 1}.</b>
+            <span>${white}</span>
+            <span>${black}</span>
+          </div>`;
+        }).join("")
+      : `<div class="muted" style="padding:12px">No moves yet.</div>`;
+    movesEl.scrollTop = movesEl.scrollHeight;
+  }
+
+  const moveCountEl = document.getElementById("moveCount");
+  if (moveCountEl) {
+    moveCountEl.textContent = history.length ? `${history.length} moves` : "";
+  }
+
+  const pgnBox = document.getElementById("pgnBox");
+  if (pgnBox) {
+    pgnBox.value = state.game.pgn() || (state.mpRoom && state.mpRoom.pgn) || "";
+  }
+
+  applyBoardScale(parseFloat(localStorage.getItem("reck_board_scale") || "1.0"));
 
   if (state.playMode === "multiplayer" && state.mpRoom) {
     const room = state.mpRoom;
@@ -1689,7 +1748,7 @@ function startMpEventSource(gameId) {
       const data = JSON.parse(event.data);
       if (data.type === "sync" || data.type === "move_made") {
         state.mpRoom = data.state;
-        state.game.load(data.state.fen);
+        loadGameState(data.state.fen, data.state.pgn);
         if (data.move) {
           state.lastMove = { from: data.move.from, to: data.move.to };
           if (data.state.inCheck) soundFx.check();
@@ -1733,7 +1792,7 @@ function startMpEventSource(gameId) {
           }
         }
         state.mpRoom = data.state;
-        state.game.load(data.state.fen);
+        loadGameState(data.state.fen, data.state.pgn);
         soundFx.gameEnd();
         toast("Opponent joined! Match started!");
         render();
@@ -1741,8 +1800,28 @@ function startMpEventSource(gameId) {
       } else if (data.type === "game_over") {
         stopActiveClockTimer();
         state.mpRoom = data.state;
-        state.game.load(data.state.fen);
+        loadGameState(data.state.fen, data.state.pgn);
         soundFx.gameEnd();
+
+        // 1. Live update Elo without needing page refresh!
+        if (data.ratingData) {
+          const myRatingInfo = state.mpColor === "white" ? data.ratingData.white : data.ratingData.black;
+          if (myRatingInfo && typeof myRatingInfo.newRating === "number") {
+            state.rating = myRatingInfo.newRating;
+            if (state.user) {
+              state.user.rating = myRatingInfo.newRating;
+            }
+            const topRatingEl = document.getElementById("topRating");
+            if (topRatingEl) topRatingEl.textContent = myRatingInfo.newRating;
+          }
+        }
+
+        // 2. Live update Games played and Wins
+        state.games = (state.games || 0) + 1;
+        if (data.winner === state.mpColor) {
+          state.wins = (state.wins || 0) + 1;
+        }
+
         render();
         const reasonText = data.termination === "abandonment"
           ? "by Disconnection / Abandonment"
@@ -1834,6 +1913,56 @@ function initMultiplayerControls() {
       flipBtn.onclick = () => {
         state.orientation = state.orientation === "w" ? "b" : "w";
         renderPlayBoard();
+      };
+    }
+
+    const btnReduce = document.getElementById("btnReduceBoard");
+    if (btnReduce) {
+      btnReduce.onclick = () => {
+        const currentScale = parseFloat(localStorage.getItem("reck_board_scale") || "1.0");
+        const newScale = Math.max(0.75, currentScale - 0.1);
+        localStorage.setItem("reck_board_scale", newScale.toFixed(2));
+        applyBoardScale(newScale);
+      };
+    }
+
+    const btnExpand = document.getElementById("btnExpandBoard");
+    if (btnExpand) {
+      btnExpand.onclick = () => {
+        const currentScale = parseFloat(localStorage.getItem("reck_board_scale") || "1.0");
+        const newScale = Math.min(1.3, currentScale + 0.1);
+        localStorage.setItem("reck_board_scale", newScale.toFixed(2));
+        applyBoardScale(newScale);
+      };
+    }
+
+    const btnCopyPgn = document.getElementById("btnCopyPgn");
+    if (btnCopyPgn) {
+      btnCopyPgn.onclick = () => {
+        const pgn = state.game.pgn() || (state.mpRoom && state.mpRoom.pgn) || "";
+        if (pgn) {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(pgn).then(() => {
+              toast("PGN copied to clipboard! 📋");
+            }).catch(() => {
+              const box = document.getElementById("pgnBox");
+              if (box) {
+                box.select();
+                document.execCommand("copy");
+                toast("PGN copied to clipboard! 📋");
+              }
+            });
+          } else {
+            const box = document.getElementById("pgnBox");
+            if (box) {
+              box.select();
+              document.execCommand("copy");
+              toast("PGN copied to clipboard! 📋");
+            }
+          }
+        } else {
+          toast("No moves in PGN yet.");
+        }
       };
     }
 
@@ -2019,7 +2148,8 @@ function initMultiplayerControls() {
         state.mpRoom = data.room;
         state.mpColor = data.assignedColor;
         state.orientation = data.assignedColor === "black" ? "b" : "w";
-        state.game = new Chess(data.room.fen);
+        state.game = new Chess();
+        loadGameState(data.room.fen, data.room.pgn);
         startMpEventSource(data.room.id);
         render();
       } catch (err) {
@@ -2073,7 +2203,8 @@ async function startMatchmaking(timeControl) {
     state.mpRoom = data.room;
     state.mpColor = data.assignedColor;
     state.orientation = data.assignedColor === "black" ? "b" : "w";
-    state.game = new Chess(data.room.fen || undefined);
+    state.game = new Chess();
+    loadGameState(data.room.fen, data.room.pgn);
 
     startMpEventSource(data.room.id);
 
@@ -2166,7 +2297,8 @@ window.joinOpenGame = async function(gameId) {
     state.mpRoom = data.room;
     state.mpColor = data.assignedColor;
     state.orientation = data.assignedColor === "black" ? "b" : "w";
-    state.game = new Chess(data.room.fen);
+    state.game = new Chess();
+    loadGameState(data.room.fen, data.room.pgn);
     startMpEventSource(data.room.id);
     render();
   } catch (err) {
@@ -3015,7 +3147,8 @@ async function checkActiveMultiplayerGame() {
       state.mpRoom = data.room;
       state.mpColor = data.assignedColor;
       state.orientation = data.assignedColor === "black" ? "b" : "w";
-      state.game = new Chess(data.room.fen);
+      state.game = new Chess();
+      loadGameState(data.room.fen, data.room.pgn);
       state.playMode = "multiplayer";
       state.page = "play";
       location.hash = "play";
@@ -3049,7 +3182,9 @@ async function checkSession() {
     if (data.status === "success") {
       state.loggedIn = true;
       state.user = data.user;
-      state.rating = data.user.rating;
+      state.rating = data.user.rating || 1000;
+      state.games = data.user.games || 0;
+      state.wins = data.user.wins || 0;
       state.forcePasswordChange =
       data.user.must_change_password === true;
 

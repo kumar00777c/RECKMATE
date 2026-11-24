@@ -253,6 +253,36 @@ app.get("/api/session", async (req, res) => {
         });
     }
 
+    // Compute live games played & games won from Games table
+    let gamesPlayed = 0;
+    let gamesWon = 0;
+    try {
+        const adminSupabase = createSupabaseAdminClient();
+        if (adminSupabase) {
+            const { count: totalGames } = await adminSupabase
+                .from("Games")
+                .select("*", { count: "exact", head: true })
+                .or(`white_player_id.eq.${userId},black_player_id.eq.${userId}`);
+
+            const { count: whiteWins } = await adminSupabase
+                .from("Games")
+                .select("*", { count: "exact", head: true })
+                .eq("white_player_id", userId)
+                .eq("winner", "white");
+
+            const { count: blackWins } = await adminSupabase
+                .from("Games")
+                .select("*", { count: "exact", head: true })
+                .eq("black_player_id", userId)
+                .eq("winner", "black");
+
+            gamesPlayed = totalGames || 0;
+            gamesWon = (whiteWins || 0) + (blackWins || 0);
+        }
+    } catch (e) {
+        console.warn("Could not calculate games stats:", e.message);
+    }
+
     res.json({
         status: "success",
         user: {
@@ -261,7 +291,9 @@ app.get("/api/session", async (req, res) => {
             full_name: profile.full_name,
             role: profile.role,
             rating: profile.rating,
-            must_change_password: profile.must_change_password
+            must_change_password: profile.must_change_password,
+            games: gamesPlayed,
+            wins: gamesWon
         }
     });
 });
@@ -1452,7 +1484,7 @@ app.get("/api/matches", async (req, res) => {
             return res.status(401).json({ status: "error", message: "Not authenticated." });
         }
 
-        const supabase = createSupabaseClient();
+        const supabase = createSupabaseAdminClient() || createSupabaseClient();
         const { data: games, error } = await supabase
             .from("Games")
             .select("*")
