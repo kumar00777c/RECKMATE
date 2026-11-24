@@ -1471,8 +1471,6 @@ function liveMultiplayerView() {
         <!-- In-game Actions (NO LEAVE MATCH OPTION, NO UNDO) -->
         <div class="actions" style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
           <button class="btn" id="flip" title="Flip Board">🔄 Flip</button>
-          <button class="btn" id="btnReduceBoard" title="Reduce Board Size" style="padding:6px 12px; font-size:12px;">🔍 Smaller</button>
-          <button class="btn" id="btnExpandBoard" title="Expand Board Size" style="padding:6px 12px; font-size:12px;">🔍 Larger</button>
           ${isCompleted
             ? `<button class="btn primary" id="btnPlayAgain">⚔️ Back to Arena / New Match</button>`
             : `
@@ -1592,21 +1590,6 @@ function loadGameState(fen, pgn) {
   }
 }
 
-function applyBoardScale(scale) {
-  const mount = document.getElementById("boardMount");
-  if (!mount) return;
-  const boardEl = mount.querySelector(".board");
-  if (boardEl) {
-    if (window.innerWidth <= 860) {
-      boardEl.style.width = "100%";
-    } else {
-      const baseVh = 52;
-      const basePx = 460;
-      boardEl.style.width = `min(100%, ${(basePx * scale).toFixed(0)}px, ${(baseVh * scale).toFixed(1)}vh)`;
-    }
-  }
-}
-
 function initGame(){
   state.game = new Chess();
   state.selected = null;
@@ -1651,8 +1634,6 @@ function renderPlayBoard(){
   if (pgnBox) {
     pgnBox.value = state.game.pgn() || (state.mpRoom && state.mpRoom.pgn) || "";
   }
-
-  applyBoardScale(parseFloat(localStorage.getItem("reck_board_scale") || "1.0"));
 
   if (state.playMode === "multiplayer" && state.mpRoom) {
     const room = state.mpRoom;
@@ -1913,26 +1894,6 @@ function initMultiplayerControls() {
       flipBtn.onclick = () => {
         state.orientation = state.orientation === "w" ? "b" : "w";
         renderPlayBoard();
-      };
-    }
-
-    const btnReduce = document.getElementById("btnReduceBoard");
-    if (btnReduce) {
-      btnReduce.onclick = () => {
-        const currentScale = parseFloat(localStorage.getItem("reck_board_scale") || "1.0");
-        const newScale = Math.max(0.75, currentScale - 0.1);
-        localStorage.setItem("reck_board_scale", newScale.toFixed(2));
-        applyBoardScale(newScale);
-      };
-    }
-
-    const btnExpand = document.getElementById("btnExpandBoard");
-    if (btnExpand) {
-      btnExpand.onclick = () => {
-        const currentScale = parseFloat(localStorage.getItem("reck_board_scale") || "1.0");
-        const newScale = Math.min(1.3, currentScale + 0.1);
-        localStorage.setItem("reck_board_scale", newScale.toFixed(2));
-        applyBoardScale(newScale);
       };
     }
 

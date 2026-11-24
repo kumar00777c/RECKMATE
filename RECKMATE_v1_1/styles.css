@@ -679,17 +679,28 @@ tr:last-child td{border-bottom:0}
     flex-direction: column;
   }
 
-  .play-layout {
-    grid-template-columns: 1fr;
-    gap: 12px;
+  /* Mobile UI View:
+     1. Expand the width of the chess board to full width.
+     2. The options and cards MUST be below the chessboard, NOT sideways!
+  */
+  .play-layout,
+  .play-layout.chesscom-layout {
+    display: flex !important;
+    flex-direction: column !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    gap: 12px !important;
+    margin: 0 !important;
   }
 
   .chesscom-layout .board-shell,
   .board-shell {
-    width: 100%;
-    max-width: 100vw;
-    padding: 6px 4px;
-    border-radius: 12px;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 6px 4px !important;
+    margin: 0 !important;
+    border-radius: 12px !important;
+    box-sizing: border-box !important;
   }
 
   .chesscom-layout .board,
@@ -699,12 +710,12 @@ tr:last-child td{border-bottom:0}
     aspect-ratio: 1 / 1 !important;
     max-width: calc(100vw - 12px) !important;
     margin: 0 auto !important;
-    border-radius: 6px;
+    border-radius: 6px !important;
   }
 
   .chesscom-layout .square,
   .square {
-    font-size: clamp(28px, 9vw, 44px) !important;
+    font-size: clamp(28px, 9.5vw, 46px) !important;
   }
 
   .player-bar {
@@ -716,8 +727,23 @@ tr:last-child td{border-bottom:0}
     margin-top: 6px;
   }
 
+  .chesscom-layout .chess-side,
   .chess-side {
-    margin-top: 16px;
+    width: 100% !important;
+    max-width: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    margin: 14px 0 0 0 !important;
+    padding: 0 !important;
+    gap: 10px !important;
+  }
+
+  .chesscom-layout .chess-side .card,
+  .chess-side .card {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    margin-bottom: 0 !important;
   }
 
   .clock {
@@ -733,26 +759,50 @@ tr:last-child td{border-bottom:0}
 /* ==========================================================================
    Chess.com Style Multiplayer Arena & Clock Styling
    ========================================================================== */
-/* PC View: Perfectly balanced board & shell so board + opponent name fit within screen without vertical scrolling */
-.play-layout.chesscom-layout {
-  display: grid;
-  grid-template-columns: minmax(300px, min(490px, 58vh)) minmax(280px, 1fr);
-  gap: 18px;
-  align-items: start;
-}
+/* PC UI View:
+   1. Reduce side cards by 50% to a compact 300px width.
+   2. Expand and fill the remaining area with the chessboard.
+   3. Expand the chessboard size about 10-15px to the left side.
+*/
+@media (min-width: 861px) {
+  .play-layout.chesscom-layout {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    gap: 22px;
+    align-items: start;
+  }
 
-.chesscom-layout .board-shell {
-  padding: 10px 14px;
-}
+  .chesscom-layout .board-shell {
+    margin-left: -14px; /* Expand 10-15px to the left */
+    width: calc(100% + 14px);
+    padding: 12px 14px;
+    box-sizing: border-box;
+  }
 
-.chesscom-layout .board {
-  width: min(100%, 460px, 52vh);
-  aspect-ratio: 1;
-  margin: 0 auto;
-}
+  .chesscom-layout .board {
+    width: min(100%, 540px, 62vh);
+    aspect-ratio: 1;
+    margin: 0 auto;
+  }
 
-.chesscom-layout .square {
-  font-size: clamp(24px, 4.2vh, 44px);
+  .chesscom-layout .square {
+    font-size: clamp(26px, 4.8vh, 50px);
+  }
+
+  .chesscom-layout .chess-side {
+    width: 300px;
+    max-width: 300px;
+    margin-top: 0;
+  }
+
+  .chesscom-layout .chess-side .card {
+    padding: 12px 14px;
+    margin-bottom: 12px;
+  }
+
+  .chesscom-layout .chess-side .moves {
+    max-height: 250px;
+  }
 }
 
 .player-bar {
